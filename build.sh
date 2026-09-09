@@ -12,11 +12,20 @@ AR_BIN=${AR_BIN:-/usr/bin/ar}
 RANLIB_BIN=${RANLIB_BIN:-/usr/bin/ranlib}
 
 WOLFSSH_PATCH="$ROOT/patches/wolfssh-rfc6187-ecdsa-signature-name.patch"
+PATCH_APPLIED_BY_BUILD=0
+cleanup() {
+    if [[ "$PATCH_APPLIED_BY_BUILD" == 1 ]]; then
+        git -C "$ROOT/wolfssh" apply --unidiff-zero --reverse "$WOLFSSH_PATCH" >/dev/null 2>&1 || true
+    fi
+}
+trap cleanup EXIT
+
 if [[ -f "$WOLFSSH_PATCH" ]]; then
     if git -C "$ROOT/wolfssh" apply --unidiff-zero --reverse --check "$WOLFSSH_PATCH" >/dev/null 2>&1; then
-        : # Patch already applied.
+        : # Patch already applied by the developer.
     elif git -C "$ROOT/wolfssh" apply --unidiff-zero --check "$WOLFSSH_PATCH" >/dev/null 2>&1; then
         git -C "$ROOT/wolfssh" apply --unidiff-zero "$WOLFSSH_PATCH"
+        PATCH_APPLIED_BY_BUILD=1
     else
         echo "wolfSSH patch does not apply cleanly to the pinned submodule" >&2
         exit 1

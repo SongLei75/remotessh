@@ -17,14 +17,15 @@
   ],
   "main": "./dist/extension.js",
   "files": [
-    "dist",
+    "dist/extension.js",
     "README.md",
+    "LICENSE",
     "package.json"
   ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "npm run typecheck && esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --external:*.node --outfile=dist/extension.js",
-    "package": "npm run build && vsce package --no-dependencies -o dist/board-copilot.vsix"
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository -o dist/board-copilot.vsix"
   },
   "dependencies": {
     "@songlei/board-session": "0.1.0"

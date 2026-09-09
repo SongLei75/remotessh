@@ -212,7 +212,10 @@ async function main(): Promise<void> {
     (event.stream === 'stderr' ? process.stderr : process.stdout).write(event.data);
   });
   session.on('error', error => process.stderr.write(`\nboard session error: ${String(error)}\n`));
-  session.on('exit', async () => { await close(process.exitCode ?? 0); });
+  session.on('exit', async () => {
+    const exitCode = typeof process.exitCode === 'number' ? process.exitCode : 0;
+    await close(exitCode);
+  });
 
   try {
     await session.start();

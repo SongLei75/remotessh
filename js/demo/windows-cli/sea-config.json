@@ -1,0 +1,10 @@
+{
+  "main": "dist/demo.js",
+  "output": "dist/board-demo.blob",
+  "disableExperimentalSEAWarning": true,
+  "useSnapshot": false,
+  "useCodeCache": false,
+  "assets": {
+    "wolfssh.exe": "../../packages/board-session/native/win32-x64/wolfssh.exe"
+  }
+}
