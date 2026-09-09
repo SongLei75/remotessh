@@ -1,0 +1,19 @@
+{
+  "name": "board-windows-demo",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/demo.js",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "npm run typecheck && esbuild src/main.ts --bundle --platform=node --format=cjs --target=node24 --external:*.node --outfile=dist/demo.js"
+  },
+  "dependencies": {
+    "@songlei/board-session": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "0.28.2",
+    "postject": "1.0.0-alpha.6",
+    "typescript": "^6.0.0"
+  }
+}

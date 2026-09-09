@@ -1,0 +1,14 @@
+{
+  "name": "board-wolf-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/board-session",
+    "vscode/board-copilot",
+    "demo/windows-cli"
+  ],
+  "scripts": {
+    "build": "npm run build -w @songlei/board-session && npm run build -w board-copilot && npm run build -w board-windows-demo",
+    "test": "npm run test -w @songlei/board-session"
+  }
+}
