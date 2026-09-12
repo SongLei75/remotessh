@@ -1,0 +1,13 @@
+# Baton network simulation: PC -> OCI E1 -> GCP public IPv6:2222.
+# `ssh -N gcpp` opens localhost:22022 as the board-facing transport.
+Host gcpp
+    HostName 2603:c020:25:ae01:85f0:8240:1c51:a5b9
+    HostKeyAlias ve1.songlei.me
+    User ubuntu
+    Port 22
+    IdentityFile ~/.ssh/id_ed25519
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    ExitOnForwardFailure yes
+    SessionType none
+    LocalForward 127.0.0.1:22022 [2600:1900:4041:46c:0:2:0:0]:2222

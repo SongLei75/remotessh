@@ -1,0 +1,4937 @@
+diff --git a/.gitignore b/.gitignore
+index dbfc5298fe77195ff180bb488d71416bcbbb8c32..b5c64007cb41c886dd961bcb627a396990aac75c 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,3 +1,14 @@
+ out
+ .vscode
+-.codex
+\ No newline at end of file
++.codex
++.qoder
++
++# Wrapper build artifacts
++wrapper/build/
++wrapper/build-win/
++__pycache__/
++*.pyc
++*.pyd
++
++# Test reports
++test-report.md
+diff --git a/AGENTS.md b/AGENTS.md
+index a1dd2eb16707d2cdb57212ae3afe95e7b3990f4c..1f7b3f3ba7f8766df6740073a3c8861620c33412 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -1,72 +1,209 @@
+ # AGENTS.md
+ 
+-## Workspace Entry
+-
+-- 当前工作区间为本仓库根目录。
+-- 本文件承载进入本仓库后的 AI 协作入口与阅读路径。
+-- 细节约束、执行要求、模块边界和测试规则，统一归类到 `.github/` 下的对应文档中，以兼容 Copilot/Codex 等 AI 入口；本文件不重复维护细则。
+-
+-## .github 导航
+-
+-`.github` 目录是当前仓库的规则与说明中心，建议按下面顺序阅读：
+-
+-- [项目编码规则与 AI 协作约束](./.github/copilot-instructions.md)
+-  - 仓库级约束入口
+-  - 包含构建流程、代码修改规范、提交要求等仓库级规则
+-- [项目 Specs 总览](./.github/specs/README.md)
+-  - 项目级设计说明入口
+-  - wolfssh x509 证书认证适配的设计背景与技术方案
+-- [测试 Skill](./.github/skills/test/SKILL.md)
+-  - 测试用例编写、执行、报告和失败用例覆盖要求
+-- [Git Commit Skill](./.github/skills/git-commit/SKILL.md)
+-  - Git 提交前检查、选择性暂存与提交信息约束
+-
+-## Codex 入口
+-
+-对于 Codex、Copilot 或任何自动化代码代理，进入本仓库后默认建议按以下顺序建立上下文：
+-
+-1. 先阅读 [`.github/copilot-instructions.md`](./.github/copilot-instructions.md)
+-2. 再查看 [`.github/specs/README.md`](./.github/specs/README.md)
+-3. 若需求涉及测试设计或新增测试，再查看 [`.github/skills/test/SKILL.md`](./.github/skills/test/SKILL.md)
+-4. 若需求涉及创建提交，再查看 [`.github/skills/git-commit/SKILL.md`](./.github/skills/git-commit/SKILL.md)
+-
+ ## 项目概述
+ 
+-- 本仓库是 wolfssh + wolfssl 的 superbuild 工程，目标是编译支持 **x509 证书认证 (RFC 6187)** 的 wolfssh SSH 客户端，用于与 PKIX-SSH 服务端进行互操作验证。
+-- 对于wolfssh的修改在当前需求背景下应该只需要对apps下的wolfssh部分以及examples下的scpclient和sftpclient部分修改，其它模块的修改都应与用户确认
+-
+-### 仓库结构
+-
+-| 路径 | 说明 |
+-|------|------|
+-| `CMakeLists.txt` | Superbuild 编排：通过 ExternalProject 构建 wolfssl 和 wolfssh（Linux + Windows） |
+-| `Makefile` | 顶层入口：`make linux` / `make windows` / `make all` / `make clean` |
+-| `wolfssh/` | Git subtree — wolfSSL/wolfssh (v1.5.0-stable)，含本地修改 |
+-| `wolfssl/` | Git subtree — wolfSSL/wolfssl (v5.9.1-stable)，未修改 |
+-| `out/` | 构建产物目录（不纳入版本控制） |
+-
+-### 构建关键机制
+-
+-- CMakeLists.txt 使用 `copy_directory` 将 wolfssh 源码复制到构建目录，实现源码与构建产物隔离
+-- 修改 wolfssh 源码后可直接构建，无需额外操作
+-- wolfssl 编译参数：`-DWOLFSSL_WOLFSSH=yes -DWOLFSSL_IP_ALT_NAME=yes`
+-- wolfssh 编译参数：`--enable-certs --enable-sshclient --enable-scp --enable-sftp`
++- wolfssh + wolfssl superbuild 工程
++- 用于与 PKIX-SSH 服务端互操作
++- 最终目标:
++  - 支持 windows 和 linux 上与OpenSSH 风格的一致的客户端工具集：ssh、scp、sftp
++  - 工具集全体支持 **x509 证书认证 (RFC 6187)**
++  - 支持 python wrapper
++    - 使 windows 和 linux 上导入 wrapper 后可以以动态库符号调用实现类似 paramiko 的 ssh 访问
++    - 可以在 paramiko 的源码最小改动，比如新增 `__superinit__` 通过本工程获取到 ssh 真实的 fd 喂给原本的 paramiko 模块
++
++## 构建
++
++```bash
++make all      # 清理产物模块 构建windows和linux产物
++make linux    # 构建 Linux 二进制 → out/release/linux/bin/
++make windows  # 构建 Windows (MinGW 交叉编译)
++make clean    # 清理 out/
++```
+ 
+-## 开发说明
++**Linux 构建配置：**
++```
++--enable-certs --enable-sshclient --enable-scp --enable-sftp --enable-fwd
++```
+ 
+-如果只是快速定位内容，可优先从以下路径进入：
++## 仓库结构
++
++| 路径              | 说明                                                |
++| ----------------- | --------------------------------------------------- |
++| `CMakeLists.txt`  | Superbuild 编排（ExternalProject）                  |
++| `Makefile`        | 顶层入口                                            |
++| `wolfssh/`        | Git subtree — wolfssh v1.5.0-stable，**含本地修改** |
++| `wolfssl/`        | Git subtree — wolfssl v5.9.1-stable，未修改         |
++| `out/`            | 构建产物（不纳入版本控制，构建后临时生成）          |
++| `local-fwd.patch` | 端口转发参考 patch（已包含在源码中，仅保留参考）    |
++| `python/`         | 预计给 python 的 wrapper 准备的目录                 |
++
++## 修改边界
++
++- `wolfssh/apps/wolfssh/` — wolfssh 客户端主程序（wolfssh.c, common.c/h）
++- `wolfssh/wolfssh/test.h` — 平台抽象（Unix socket、网络工具函数）
++- `wolfssh/examples/client/` — scp/sftp 共享代码（common.c/h）
++- `wolfssh/examples/scpclient/` — scp 客户端
++- `wolfssh/examples/sftpclient/` — sftp 客户端
++- `CMakeLists.txt` — 构建配置
++- **其它模块的修改必须与用户确认**
++
++## 关键代码入口
++
++- `wolfssh/src/internal.c` — SSH 协议核心，含 RFC 6187 x509 认证、direct-tcpip 和 direct-streamlocal@openssh.com 通道
++- `wolfssh/apps/wolfssh/wolfssh.c` — wolfssh 客户端主程序，含：
++  - `struct config` / `config_parse_command_line()` — 参数解析
++  - `localForwardLoop()` — `-L` 端口转发循环（多监听器 + 多并发连接）
++  - `wolfSSH_Client()` — 主函数流程
++- `wolfssh/apps/wolfssh/common.c` — 密钥加载、known_hosts 校验、SSH config 解析
++- `wolfssh/examples/client/common.c` — scp/sftp 共享的密钥加载和 SSH config 解析
++- `wolfssh/examples/portfwd/portfwd.c` — 端口转发参考实现
++
++## 已实现功能
++
++| 功能               | OpenSSH 等价                       | 状态            |
++| ------------------ | ---------------------------------- | --------------- |
++| 远程命令执行       | `ssh user@host "cmd"`              | ✅               |
++| 指定密钥/用户/端口 | `-i` / `-l` / `-p`                 | ✅               |
++| x509 证书认证      | N/A                                | ✅ (`-X`)        |
++| SSH config 解析    | `~/.ssh/config`                    | ✅               |
++| 退出码透传         | 自动                               | ✅               |
++| 配置打印           | `ssh -G`                           | ✅               |
++| 本地端口转发       | `ssh -L [bind:]port:host:hostport` | ✅               |
++| Unix socket 转发   | `ssh -L /local.sock:/remote.sock`  | ✅               |
++| 多个 `-L`          | `ssh -L p1:h1:hp1 -L p2:h2:hp2`    | ✅               |
++| 并发转发连接       | 自动                               | ✅（最多 64 个） |
++| SCP 上传/下载      | `scp`                              | ✅               |
++| SFTP 交互/一键     | `sftp`                             | ✅               |
++
++## 已知问题
++
++1. **PTY 模式 Segfault** — `wolfssh -t` 触发 SIGSEGV，影响交互式终端
++2. **`-l` + `-p` 组合 munmap_chunk 崩溃** — 命令执行成功但退出时 core dump
++3. **`-E` 日志文件未生成** — 参数可接受但不产出文件
++4. **`-N` 不保持连接** — 与 OpenSSH 行为不一致（单独使用时立即退出，但配合 `-L` 时隧道正常工作）
++5. **非交互模式 `Error reading stdin` 提示** — 不影响功能
++6. **端口转发远端目标限制** — 对端 PKIX-SSH 未监听 `127.0.0.1`，转发目标须使用具体 IP（非代码缺陷）
++
++## 测试
++
++- 测试环境：Docker 容器 `ee9f2a54a94a` 内通过 wolfssh/wolfscp/wolfsftp 连接 PKIX-SSH 服务端
++- 服务端：PKIX-SSH 16.2 @ 192.168.2.62:22 (aarch64)
++- 部署：`sudo docker cp out/release/linux/bin/. ee9f2a54a94a:/opt/wolfssh/`
++- 容器内执行需设置 `LD_LIBRARY_PATH=/opt/wolfssh/lib`
++- 测试报告 `test-report.html`（仅在用户指定进行测试时生成）
++
++### 测试报告格式模板
++
++生成测试报告时严格按照以下结构和格式，文件名 `test-report.html`，使用独立 HTML 文件（内联 CSS，无外部依赖）：
++
++```html
++<!DOCTYPE html>
++<html lang="zh-CN">
++<head>
++<meta charset="UTF-8">
++<title>wolfssh 客户端工具测试报告</title>
++<style>
++  /* 内联样式：表格、代码块、状态标记等 */
++  body { font-family: -apple-system, "Segoe UI", sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background-color: #fff; }
++  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
++  th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
++  th { background: #f5f5f5; }
++  pre { background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 4px; overflow-x: auto; }
++  .pass { color: #22863a; } .warn { color: #b08800; } .fail { color: #cb2431; } .ext { color: #0366d6; }
++  .note { background: #fff8c5; border-left: 4px solid #b08800; padding: 8px 12px; margin: 8px 0; }
++  h1 { border-bottom: 2px solid #333; } h2 { border-bottom: 1px solid #ddd; }
++</style>
++</head>
++<body>
++<h1>wolfssh 客户端工具测试报告</h1>
++<section class="env">
++  <!-- 测试环境信息 -->
++</section>
++
++<h1>wolfssh（SSH 客户端）</h1>
++<h2>测试用例名称</h2>
++<h3>测试指令</h3>
++<pre><code>完整可复制的命令</code></pre>
++<h3>终端回显</h3>
++<pre><code>实际终端输出，包含 EXIT=&lt;code&gt;</code></pre>
++<div class="note">（可选）对异常行为或已知问题的说明</div>
++
++<!-- wolfscp / wolfsftp 同上结构 -->
++
++<h1>与 OpenSSH 用法对比</h1>
++<!-- 命令行语法对比表格 -->
++<!-- 默认行为对比表格 -->
++<!-- 测试结果总结表格 -->
++
++<h1>已知问题</h1>
++<!-- 编号列表 -->
++</body>
++</html>
++```
+ 
+-- `wolfssh/src/internal.c` — 核心 SSH 协议实现，含 RFC 6187 x509 认证逻辑
+-- `wolfssh/examples/client/` — SSH 客户端示例，含证书加载和认证回调
+-- `CMakeLists.txt` — 构建编排
++状态标记使用 CSS class：
++- `<span class="pass">✅ 兼容</span>`
++- `<span class="warn">⚠️ 部分兼容</span>`（附说明）
++- `<span class="fail">❌ 缺失</span>`
++- `<span class="ext">🆕 扩展功能</span>`
++
++### 测试用例覆盖要求
++
++**wolfssh（SSH 客户端）— 19 项：**
++1. 版本信息显示（`-V`）
++2. 远程命令执行（`user@host "cmd"`）
++3. 多命令执行（`"cmd1 && cmd2"`）
++4. 指定密钥文件（`-i`）
++5. 指定用户名和端口（`-l` / `-p`）
++6. 强制 x509 认证模式（`-X`）
++7. 日志输出到文件（`-E`）
++8. 配置打印（`-G`）
++9. 远程命令退出码传递（`"exit N"` → 本地 EXIT=N）
++10. 错误密钥认证失败（预期失败）
++11. 连接错误端口（预期失败）
++12. 不执行远程命令（`-N`）
++13. 二进制数据传输（`dd | wc -c`）
++14. 交互式终端登录（`-t`）+ 强制 PTY + 远程命令（`-t "cmd"`）
++15. 本地端口转发（`-L`）— 基本转发
++16. 本地端口转发（`-L`）— 隧道数据传输
++17. 本地端口转发（`-L`）— 多并发连接
++18. Unix socket 转发（`-L /local.sock:/remote.sock`）
++19. Unix socket 转发（`-L port:/remote.sock`）— TCP 到远端 socket
++
++**wolfscp（SCP 客户端）— 5 项：**
++1. 帮助信息（`-h`）
++2. 文件上传（本地→远程）+ 验证
++3. 文件下载（远程→本地）+ 验证
++4. 大文件传输与 MD5 校验（512KB）
++5. 无密钥参数自动读取 SSH config
++
++**wolfsftp（SFTP 客户端）— 9 项：**
++1. 帮助信息（`-h`）
++2. 交互式目录浏览（`pwd` / `ls`）
++3. 文件上传 put（交互模式）
++4. 文件下载 get（交互模式）
++5. 目录操作（`mkdir` / `cd` / `pwd`）
++6. 一键上传模式（非交互）
++7. 一键下载模式（非交互）
++8. 大文件传输与 MD5 校验（512KB）
++9. 无密钥参数自动读取 SSH config
++
++### 测试报告书写要点
++
++- 每个测试用例必须包含**完整可复制的命令**和**实际终端输出**（含 `EXIT=<code>`）
++- 大文件传输需同时记录本地和远程的 MD5 值
++- 交互式 SFTP 测试用 `printf "cmd1\ncmd2\nquit\n" | wolfsftp ...` 形式，非手动交互
++- 兼容性标记：✅ 兼容 / ⚠️ 部分兼容（附说明） / ❌ 缺失 / 🆕 扩展功能
++- 已知问题标注是否影响功能
++- 测试结果总结表必须有合计行
+ 
+ ## Git 提交规范
+ 
+ ### Jira ID 强制要求
+ 
+-- **每次提交必须包含 Jira ID**，提交前必须向用户询问对应的 Jira ID
+-- 如果用户未提供 Jira ID，则**禁止执行 `git commit`**
+-- Jira ID 格式示例：`JETTA-6434`、`PRO-38854`
++- **每次提交必须包含 Jira ID**，提交前必须向用户询问
++- 未提供 Jira ID 则**禁止执行 `git commit`**
++- 格式示例：`JETTA-6434`、`PRO-38854`
+ 
+ ### Commit 消息格式
+ 
+@@ -74,23 +211,10 @@
+ <type>(<scope>): [<JIRA-ID>] <description>
+ ```
+ 
+-示例：
+-
+-```
+-fix(wolfssh): [JETTA-6434] 适配 PKIX-SSH 服务端的 x509 证书认证
+-docs(agents): [JETTA-6434] 添加 AGENTS.md
+-```
+-
+-- `type`：`feat` / `fix` / `build` / `docs` / `test` / `refactor` / `chore` 等
+-- `scope`：可选，模块名
++- `type`：**必填**，`feat` / `fix` / `build` / `docs` / `test` / `refactor` / `chore`
++- `scope`：**必填**，模块名
+ - `[JIRA-ID]`：**必填**，方括号包裹
+-- **commit 消息仅包含标题，不需要写 commit 正文**
+-
+-## 维护建议
+-
+-后续如果继续补充仓库说明，建议遵循以下原则：
+-
+-- 根 README 只保留"仓库导览"职责，不堆积 AI 协作说明
+-- 项目设计说明放到 `.github/specs/` 下
+-- AI 协作规则统一收敛到 `.github/copilot-instructions.md`
+-- 测试编写规范统一收敛到 `.github/skills/test/SKILL.md`
++- `<description>`：**使用中文**
++- **仅标题，不写正文**
++`<description>`：**使用中文**
++-
+\ No newline at end of file
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 14dcf2d6ac740087be666938ed2597b628b526f8..27552fe4c136a7704c66b22396e1b9a337f37ba0 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -11,6 +11,11 @@ endif()
+ 
+ find_program(BASH_EXECUTABLE bash REQUIRED)
+ find_program(MAKE_EXECUTABLE make REQUIRED)
++find_program(MINGW_GCC x86_64-w64-mingw32-gcc)
++find_program(MINGW_AR x86_64-w64-mingw32-ar)
++find_program(MINGW_RANLIB x86_64-w64-mingw32-ranlib)
++find_program(MINGW_STRIP x86_64-w64-mingw32-strip)
++find_program(MINGW_WINDRES x86_64-w64-mingw32-windres)
+ 
+ set(ROOT_DIR "${CMAKE_SOURCE_DIR}")
+ set(OUT_DIR "${ROOT_DIR}/out")
+@@ -25,6 +30,15 @@ set(WOLFSSH_LINUX_SRC "${LINUX_ROOT}/wolfssh-src")
+ set(WOLFSSH_LINUX_STAGE "${LINUX_STAGE_ROOT}/wolfssh")
+ set(LINUX_RELEASE_DIR "${RELEASE_ROOT}/linux")
+ 
++set(WINDOWS_ROOT "${BUILD_ROOT}/windows")
++set(WINDOWS_STAGE_ROOT "${WINDOWS_ROOT}/stage")
++set(WOLFSSL_WINDOWS_SRC "${WINDOWS_ROOT}/wolfssl-src")
++set(WOLFSSL_WINDOWS_BUILD "${WINDOWS_ROOT}/wolfssl-build")
++set(WOLFSSL_WINDOWS_STAGE "${WINDOWS_STAGE_ROOT}/wolfssl")
++set(WOLFSSH_WINDOWS_SRC "${WINDOWS_ROOT}/wolfssh-src")
++set(WOLFSSH_WINDOWS_STAGE "${WINDOWS_STAGE_ROOT}/wolfssh")
++set(WINDOWS_RELEASE_DIR "${RELEASE_ROOT}/windows")
++
+ file(MAKE_DIRECTORY "${BUILD_ROOT}" "${RELEASE_ROOT}")
+ 
+ add_custom_command(
+@@ -61,7 +75,7 @@ ExternalProject_Add(wolfssh_linux
+     SOURCE_DIR "${WOLFSSH_LINUX_SRC}"
+     BUILD_IN_SOURCE 1
+     CONFIGURE_COMMAND "${BASH_EXECUTABLE}" -lc
+-        "cd '${WOLFSSH_LINUX_SRC}' && ./autogen.sh && ./configure --prefix='${WOLFSSH_LINUX_STAGE}' --with-wolfssl='${WOLFSSL_LINUX_STAGE}' --enable-certs --enable-sshclient --enable-scp --enable-sftp"
++        "cd '${WOLFSSH_LINUX_SRC}' && ./autogen.sh && ./configure --prefix='${WOLFSSH_LINUX_STAGE}' --with-wolfssl='${WOLFSSL_LINUX_STAGE}' --enable-certs --enable-sshclient --enable-scp --enable-sftp --enable-fwd"
+     BUILD_COMMAND "${MAKE_EXECUTABLE}" -C "${WOLFSSH_LINUX_SRC}" -j${HOST_JOBS}
+     INSTALL_COMMAND "${MAKE_EXECUTABLE}" -C "${WOLFSSH_LINUX_SRC}" install
+     DEPENDS prepare_wolfssh_linux wolfssl_linux
+@@ -82,3 +96,68 @@ add_custom_command(
+     VERBATIM
+ )
+ add_custom_target(linux DEPENDS "${LINUX_RELEASE_DIR}/.packaged")
++
++add_custom_command(
++    OUTPUT "${WOLFSSH_WINDOWS_SRC}/.prepared"
++    COMMAND "${CMAKE_COMMAND}" -E rm -rf "${WOLFSSH_WINDOWS_SRC}"
++    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${ROOT_DIR}/wolfssh" "${WOLFSSH_WINDOWS_SRC}"
++    COMMAND "${CMAKE_COMMAND}" -E touch "${WOLFSSH_WINDOWS_SRC}/.prepared"
++    DEPENDS "${ROOT_DIR}/wolfssh/configure.ac"
++    VERBATIM
++)
++add_custom_target(prepare_wolfssh_windows DEPENDS "${WOLFSSH_WINDOWS_SRC}/.prepared")
++
++add_custom_command(
++    OUTPUT "${WOLFSSL_WINDOWS_SRC}/.prepared"
++    COMMAND "${CMAKE_COMMAND}" -E rm -rf "${WOLFSSL_WINDOWS_SRC}"
++    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${ROOT_DIR}/wolfssl" "${WOLFSSL_WINDOWS_SRC}"
++    COMMAND "${CMAKE_COMMAND}" -E touch "${WOLFSSL_WINDOWS_SRC}/.prepared"
++    DEPENDS "${ROOT_DIR}/wolfssl/configure.ac"
++    VERBATIM
++)
++add_custom_target(prepare_wolfssl_windows DEPENDS "${WOLFSSL_WINDOWS_SRC}/.prepared")
++
++ExternalProject_Add(wolfssl_windows
++    DOWNLOAD_COMMAND ""
++    UPDATE_COMMAND ""
++    PATCH_COMMAND ""
++    TEST_COMMAND ""
++    SOURCE_DIR "${WOLFSSL_WINDOWS_SRC}"
++    BUILD_IN_SOURCE 1
++    CONFIGURE_COMMAND "${BASH_EXECUTABLE}" -lc
++        "cd '${WOLFSSL_WINDOWS_SRC}' && ./autogen.sh && CC='${MINGW_GCC}' AR='${MINGW_AR}' RANLIB='${MINGW_RANLIB}' STRIP='${MINGW_STRIP}' WINDRES='${MINGW_WINDRES}' ./configure --host=x86_64-w64-mingw32 --prefix='${WOLFSSL_WINDOWS_STAGE}' --enable-shared --disable-static --enable-wolfssh --enable-ip-alt-name"
++    BUILD_COMMAND "${MAKE_EXECUTABLE}" -C "${WOLFSSL_WINDOWS_SRC}" -j${HOST_JOBS}
++    INSTALL_COMMAND "${MAKE_EXECUTABLE}" -C "${WOLFSSL_WINDOWS_SRC}" install
++    DEPENDS prepare_wolfssl_windows
++)
++
++ExternalProject_Add(wolfssh_windows
++    DOWNLOAD_COMMAND ""
++    UPDATE_COMMAND ""
++    PATCH_COMMAND ""
++    TEST_COMMAND ""
++    SOURCE_DIR "${WOLFSSH_WINDOWS_SRC}"
++    BUILD_IN_SOURCE 1
++    CONFIGURE_COMMAND "${BASH_EXECUTABLE}" -lc
++        "cd '${WOLFSSH_WINDOWS_SRC}' && ./autogen.sh && CC='${MINGW_GCC}' AR='${MINGW_AR}' RANLIB='${MINGW_RANLIB}' STRIP='${MINGW_STRIP}' WINDRES='${MINGW_WINDRES}' CPPFLAGS='-DUSE_WINDOWS_API' LIBS='-lws2_32 -lcrypt32 -ladvapi32' ./configure --host=x86_64-w64-mingw32 --prefix='${WOLFSSH_WINDOWS_STAGE}' --with-wolfssl='${WOLFSSL_WINDOWS_STAGE}' --enable-certs --enable-sshclient --enable-scp --enable-sftp --enable-fwd"
++    BUILD_COMMAND "${MAKE_EXECUTABLE}" -C "${WOLFSSH_WINDOWS_SRC}" -j${HOST_JOBS} apps/wolfssh/wolfssh.exe examples/client/client.exe examples/scpclient/wolfscp.exe examples/sftpclient/wolfsftp.exe
++    INSTALL_COMMAND "${CMAKE_COMMAND}" -E echo "Skipping wolfssh install step; package copies the built Windows binaries directly"
++    DEPENDS prepare_wolfssh_windows wolfssl_windows
++)
++
++add_custom_command(
++    OUTPUT "${WINDOWS_RELEASE_DIR}/.packaged"
++    COMMAND "${CMAKE_COMMAND}" -E rm -rf "${WINDOWS_RELEASE_DIR}"
++    COMMAND "${CMAKE_COMMAND}" -E make_directory "${WINDOWS_RELEASE_DIR}/bin"
++    COMMAND "${CMAKE_COMMAND}" -E copy "${WOLFSSH_WINDOWS_SRC}/apps/wolfssh/.libs/wolfssh.exe" "${WINDOWS_RELEASE_DIR}/bin/wolfssh.exe"
++    COMMAND "${CMAKE_COMMAND}" -E copy "${WOLFSSH_WINDOWS_SRC}/examples/client/.libs/client.exe" "${WINDOWS_RELEASE_DIR}/bin/wolfssh-x509-client.exe"
++    COMMAND "${CMAKE_COMMAND}" -E copy "${WOLFSSH_WINDOWS_SRC}/examples/scpclient/.libs/wolfscp.exe" "${WINDOWS_RELEASE_DIR}/bin/wolfscp.exe"
++    COMMAND "${CMAKE_COMMAND}" -E copy "${WOLFSSH_WINDOWS_SRC}/examples/sftpclient/.libs/wolfsftp.exe" "${WINDOWS_RELEASE_DIR}/bin/wolfsftp.exe"
++    COMMAND "${BASH_EXECUTABLE}" -lc "cp -a \"$(${MINGW_GCC} -print-file-name=libwinpthread-1.dll)\" '${WINDOWS_RELEASE_DIR}/bin/'"
++    COMMAND "${BASH_EXECUTABLE}" -lc "cp -a '${WOLFSSL_WINDOWS_STAGE}/bin/'*.dll '${WINDOWS_RELEASE_DIR}/bin/'"
++    COMMAND "${CMAKE_COMMAND}" -E copy "${WOLFSSH_WINDOWS_SRC}/src/.libs/libwolfssh-18.dll" "${WINDOWS_RELEASE_DIR}/bin/libwolfssh-18.dll"
++    COMMAND "${CMAKE_COMMAND}" -E touch "${WINDOWS_RELEASE_DIR}/.packaged"
++    DEPENDS wolfssh_windows
++    VERBATIM
++)
++add_custom_target(windows DEPENDS "${WINDOWS_RELEASE_DIR}/.packaged")
+diff --git a/Makefile b/Makefile
+index 0aca5ea66ca5216afd11ff985d6ff24dca80dba6..b8ac028c6c4ddc6c3b1374d88084f922b85619e5 100644
+--- a/Makefile
++++ b/Makefile
+@@ -4,9 +4,9 @@ ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+ META_BUILD_DIR := $(ROOT_DIR)/out/build/meta
+ CMAKE ?= cmake
+ 
+-.PHONY: linux windows all clean
++.PHONY: linux windows wrapper-linux wrapper-windows all clean
+ 
+-all: linux windows
++all: linux windows wrapper-linux wrapper-windows
+ 
+ $(META_BUILD_DIR)/CMakeCache.txt: $(ROOT_DIR)/CMakeLists.txt
+ 	mkdir -p $(META_BUILD_DIR)
+@@ -16,7 +16,17 @@ linux: $(META_BUILD_DIR)/CMakeCache.txt
+ 	$(CMAKE) --build $(META_BUILD_DIR) --target linux
+ 
+ windows:
+-	@echo "Windows cross-compilation not yet configured, skipping."
++	$(CMAKE) --build $(META_BUILD_DIR) --target windows
++
++wrapper-linux: linux
++	mkdir -p $(ROOT_DIR)/wrapper/build
++	cd $(ROOT_DIR)/wrapper/build && $(CMAKE) .. -DCMAKE_BUILD_TYPE=Release && $(MAKE) -j$$(nproc)
++
++wrapper-windows: windows
++	mkdir -p $(ROOT_DIR)/wrapper/build-win
++	cd $(ROOT_DIR)/wrapper/build-win && \
++		$(CMAKE) .. -DCMAKE_BUILD_TYPE=Release && \
++		$(MAKE) -j$$(nproc)
+ 
+ clean:
+-	rm -rf $(ROOT_DIR)/out
++	rm -rf $(ROOT_DIR)/out $(ROOT_DIR)/wrapper/build $(ROOT_DIR)/wrapper/build-win
+diff --git a/wolfssh/apps/wolfssh/common.c b/wolfssh/apps/wolfssh/common.c
+index c93a5aa8ce8b06f4063db2a3d1d3cfd68e835907..63a8278b6d6696275c1c06cf6e52490827673261 100644
+--- a/wolfssh/apps/wolfssh/common.c
++++ b/wolfssh/apps/wolfssh/common.c
+@@ -38,6 +38,7 @@
+ 
+ #ifdef WOLFSSH_CERTS
+     #include <wolfssl/wolfcrypt/asn.h>
++    #include <wolfssl/wolfcrypt/asn_public.h>
+ #endif
+ 
+ static byte userPublicKeyBuf[512];
+@@ -73,6 +74,72 @@ static inline void ato32(const byte* c, word32* u32)
+     *u32 = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
+ }
+ 
++const char* ClientGetHomeDir(void)
++{
++    const char* home = NULL;
++
++#ifdef USE_WINDOWS_API
++    home = getenv("USERPROFILE");
++    if (home == NULL)
++        home = getenv("HOME");
++#else
++    home = getenv("HOME");
++#endif
++
++    return home;
++}
++
++
++static int ClientEnsureParentDir(const char* fileName)
++{
++    char* dirName = NULL;
++    char* lastSlash;
++    size_t fileNameSz;
++
++    if (fileName == NULL)
++        return -1;
++
++    fileNameSz = WSTRLEN(fileName);
++    dirName = (char*)WMALLOC(fileNameSz + 1, NULL, 0);
++    if (dirName == NULL)
++        return -1;
++
++    WSTRCPY(dirName, fileName);
++    lastSlash = strrchr(dirName, '/');
++#ifdef USE_WINDOWS_API
++    {
++        char* lastBackSlash = strrchr(dirName, '\\');
++
++        if (lastBackSlash != NULL &&
++                (lastSlash == NULL || lastBackSlash > lastSlash)) {
++            lastSlash = lastBackSlash;
++        }
++    }
++#endif
++
++    if (lastSlash != NULL) {
++        *lastSlash = '\0';
++        if (dirName[0] != '\0')
++            (void)WMKDIR(NULL, dirName, 0700);
++    }
++
++    WFREE(dirName, NULL, 0);
++    return 0;
++}
++
++
++static void ClientTrimTrailingCR(char* text)
++{
++    size_t len;
++
++    if (text == NULL)
++        return;
++
++    len = WSTRLEN(text);
++    if (len > 0 && text[len - 1] == '\r')
++        text[len - 1] = '\0';
++}
++
+ 
+ static int load_der_file(const char* filename, byte** out, word32* outSz)
+ {
+@@ -274,15 +341,16 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
+ 
+     {
+         const char *defaultName = "/.ssh/known_hosts";
+-        char *env;
++        const char *env;
+ 
+-        env = getenv("HOME");
++        env = ClientGetHomeDir();
+         if (env != NULL) {
+             sz = (word32)(WSTRLEN(env) + WSTRLEN(defaultName) + 1);
+             knownHostsName = (char*)WMALLOC(sz, NULL, 0);
+             if (knownHostsName != NULL) {
+                 WSTRCPY(knownHostsName, env);
+                 WSTRCAT(knownHostsName, defaultName);
++                (void)ClientEnsureParentDir(knownHostsName);
+             }
+         }
+         else
+@@ -345,42 +413,50 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
+ 
+     cursor = (ret == 0) ? knownHosts : NULL;
+ 
+-    while (cursor) {
+-        lineCount++;
+-        line = WSTRSEP(&cursor, "\n");
+-        if (line != NULL && *line) {
+-            name = WSTRSEP(&line, " ");
+-            keyType = WSTRSEP(&line, " ");
+-            key = WSTRSEP(&line, " ");
+-            if (name && keyType && key) {
+-                int nameMatch, keyTypeMatch, keyMatch;
+-
+-                nameMatch = WSTRCMP(targetName , name) == 0;
+-                keyTypeMatch = WSTRCMP(pubKeyType, keyType) == 0;
+-                keyMatch = WSTRCMP(encodedKey, key) == 0;
+-
+-                if (nameMatch) {
+-                    if (keyTypeMatch) {
+-                        if (keyMatch) {
+-                            found = 1;
+-                        }
+-                        else {
+-                            badMatch = 1;
++    {
++        char* lineContext = NULL;
++
++        while ((line = WSTRTOK(cursor, "\n", &lineContext)) != NULL) {
++            cursor = NULL; /* subsequent calls pass NULL */
++            lineCount++;
++            if (*line == '\0')
++                continue;
++
++            ClientTrimTrailingCR(line);
++
++            {
++                char* fieldContext = NULL;
++                name = WSTRTOK(line, " ", &fieldContext);
++                keyType = WSTRTOK(NULL, " ", &fieldContext);
++                key = WSTRTOK(NULL, " ", &fieldContext);
++                if (name && keyType && key) {
++                    ClientTrimTrailingCR(name);
++                    ClientTrimTrailingCR(keyType);
++                    ClientTrimTrailingCR(key);
++
++                    int nameMatch, keyTypeMatch, keyMatch;
++
++                    nameMatch = WSTRCMP(targetName , name) == 0;
++                    keyTypeMatch = WSTRCMP(pubKeyType, keyType) == 0;
++                    keyMatch = WSTRCMP(encodedKey, key) == 0;
++
++                    if (nameMatch) {
++                        if (keyTypeMatch) {
++                            if (keyMatch) {
++                                found = 1;
++                            }
++                            else {
++                                badMatch = 1;
++                                break;
++                            }
+                         }
+-                        break;
+                     }
+-                }
+-                else {
+-                    if (keyTypeMatch && keyMatch) {
+-                        /* report key used on different address */
+-                        if (!otherMatch) {
+-                            printf("Key fingerprint is %s.\n", fp);
+-                            printf("This key matches other servers:\n");
+-                            otherMatch = 1;
+-                        }
+-                        if (otherMatch) {
+-                            printf("\t%s:%u: %s\n",
+-                                    knownHostsName, lineCount, name);
++                    else if (!found) {
++                        if (keyTypeMatch && keyMatch) {
++                            /* report key used on different address */
++                            if (!otherMatch) {
++                                otherMatch = 1;
++                            }
+                         }
+                     }
+                 }
+@@ -396,7 +472,7 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
+         }
+         else if (otherMatch) {
+             if (!found) {
+-                printf("Does this key look familiar to you?\n");
++                printf("The key is unknown but matches other servers.\n");
+                 printf("Fingerprint: %s\n", fp);
+                 printf("Shall I add it to the known hosts?\n");
+                 /* Query. */
+@@ -408,11 +484,7 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
+                     ret = -1;
+                 }
+             }
+-            else {
+-                printf("This key matched multiple servers including %s.\n",
+-                        targetName);
+-                printf("Attempting to connect.\n");
+-            }
++            /* found && otherMatch: target host known and key matches, silent */
+         }
+         else if (!found) {
+             printf("The server is unknown and the key is unknown.\n");
+@@ -477,7 +549,7 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
+                     }
+                 }
+             }
+-            FreeDecodedCert(&dCert);
++            wc_FreeDecodedCert(&dCert);
+         }
+     }
+ #else
+@@ -662,6 +734,7 @@ int ClientSetEcho(int type)
+ 
+ 
+ /* Set certificate to use and public key.
++ * Supports both DER and PEM format (including cert chains in PEM).
+  * returns 0 on success */
+ int ClientUseCert(const char* certName)
+ {
+@@ -669,12 +742,97 @@ int ClientUseCert(const char* certName)
+ 
+     if (certName != NULL) {
+     #ifdef WOLFSSH_CERTS
+-        ret = load_der_file(certName, &userPublicKey, &userPublicKeySz);
++        byte* raw = NULL;
++        word32 rawSz = 0;
++
++        ret = load_der_file(certName, &raw, &rawSz);
+         if (ret == 0) {
+-            userPublicKeyType = publicKeyType;
+-            userPublicKeyTypeSz = (word32)WSTRLEN((const char*)publicKeyType);
+-            pubKeyLoaded = 1;
+-            userPublicKeyAlloc = 1;
++            const char* pemHeader = "-----BEGIN CERTIFICATE-----";
++            int beginLen = (int)WSTRLEN(pemHeader);
++
++            if (rawSz > (word32)beginLen &&
++                WSTRNSTR((const char*)raw, pemHeader, rawSz) != NULL) {
++                /* PEM format: convert each cert block to DER and
++                 * concatenate into a single buffer */
++                byte* combined = NULL;
++                word32 combinedSz = 0;
++                word32 certCount = 0;
++                const char* p = (const char*)raw;
++                const char* end = (const char*)raw + rawSz;
++
++                while (p < end) {
++                    const char* begin = WSTRNSTR(p, pemHeader, (word32)(end - p));
++                    if (begin == NULL)
++                        break;
++
++                    /* Find the end marker */
++                    const char* endMarker = "-----END CERTIFICATE-----";
++                    const char* blockEnd = WSTRNSTR(begin, endMarker,
++                                                    (word32)(end - begin));
++                    if (blockEnd == NULL)
++                        break;
++                    blockEnd += WSTRLEN(endMarker);
++                    /* skip newline after end marker */
++                    while (blockEnd < end &&
++                           (*blockEnd == '\r' || *blockEnd == '\n'))
++                        blockEnd++;
++
++                    int pemBlockSz = (int)(blockEnd - begin);
++                    byte derBuf[4096];
++                    int derSz = wc_CertPemToDer(
++                        (const unsigned char*)begin, pemBlockSz,
++                        derBuf, (int)sizeof(derBuf), CERT_TYPE);
++
++                    if (derSz > 0) {
++                        byte* tmp = (byte*)WMALLOC(combinedSz + derSz, NULL, 0);
++                        if (tmp == NULL) {
++                            ret = -1;
++                            break;
++                        }
++                        if (combined != NULL) {
++                            WMEMCPY(tmp, combined, combinedSz);
++                            WFREE(combined, NULL, 0);
++                        }
++                        WMEMCPY(tmp + combinedSz, derBuf, derSz);
++                        combined = tmp;
++                        combinedSz += derSz;
++                        certCount++;
++                    }
++
++                    p = blockEnd;
++                }
++
++                WFREE(raw, NULL, 0);
++
++                if (ret == 0 && certCount > 0 && combined != NULL) {
++                    userPublicKey = combined;
++                    userPublicKeySz = combinedSz;
++                    userPublicKeyType = publicKeyType;
++                    userPublicKeyTypeSz =
++                        (word32)WSTRLEN((const char*)publicKeyType);
++                    pubKeyLoaded = 1;
++                    userPublicKeyAlloc = 1;
++                }
++                else {
++                    if (combined != NULL)
++                        WFREE(combined, NULL, 0);
++                    userPublicKey = userPublicKeyBuf;
++                    userPublicKeySz = 0;
++                    userPublicKeyType = NULL;
++                    userPublicKeyAlloc = 0;
++                    if (ret == 0) ret = -1;
++                }
++            }
++            else {
++                /* DER format: use as-is (original behavior) */
++                userPublicKey = raw;
++                userPublicKeySz = rawSz;
++                userPublicKeyType = publicKeyType;
++                userPublicKeyTypeSz =
++                    (word32)WSTRLEN((const char*)publicKeyType);
++                pubKeyLoaded = 1;
++                userPublicKeyAlloc = 1;
++            }
+         }
+         else {
+             userPublicKey = userPublicKeyBuf;
+@@ -718,6 +876,117 @@ int ClientSetPrivateKey(const char* privKeyName)
+ }
+ 
+ 
++/* Extract certificate(s) from a composite PEM file that contains both
++ * a private key and certificate(s). Used when -i points to a PEM file
++ * with embedded certificates.
++ * returns 0 on success, -1 if no certificate found */
++int ClientUseCertFromKeyFile(const char* keyFileName)
++{
++    int ret = -1;
++
++#ifdef WOLFSSH_CERTS
++    if (keyFileName != NULL && pubKeyLoaded == 0) {
++        byte* raw = NULL;
++        word32 rawSz = 0;
++
++        if (load_der_file(keyFileName, &raw, &rawSz) == 0) {
++            if (rawSz > 27 &&
++                WSTRNSTR((const char*)raw, "-----BEGIN CERTIFICATE-----",
++                         rawSz) != NULL) {
++                ret = ClientUseCert(keyFileName);
++            }
++            WFREE(raw, NULL, 0);
++        }
++    }
++#else
++    (void)keyFileName;
++#endif
++
++    return ret;
++}
++
++
++/* Simple ~/.ssh/config parser: look up IdentityFile for a given host.
++ * Only supports exact Host matching (no wildcards).
++ * returns 0 on success with identityFile filled, -1 if not found */
++int ClientLookupConfigIdentity(const char* configPath, const char* host,
++        char* identityFile, int identityFileSz)
++{
++#if !defined(NO_FILESYSTEM)
++    WFILE* fp = NULL;
++    char line[512];
++    int inMatchingHost = 0;
++    int found = 0;
++    int ret;
++
++    if (configPath == NULL || host == NULL ||
++            identityFile == NULL || identityFileSz <= 0)
++        return -1;
++
++    ret = WFOPEN(NULL, &fp, configPath, "r");
++    if (ret != 0 || fp == WBADFILE)
++        return -1;
++
++    while (fgets(line, (int)sizeof(line), (FILE*)fp) != NULL) {
++        char* p = line;
++        char* val;
++
++        /* skip leading whitespace */
++        while (*p == ' ' || *p == '\t') p++;
++        /* skip comments and empty lines */
++        if (*p == '#' || *p == '\n' || *p == '\r' || *p == '\0')
++            continue;
++
++        /* strip trailing whitespace/newline */
++        {
++            int len = (int)WSTRLEN(p);
++            while (len > 0 && (p[len-1] == '\n' || p[len-1] == '\r' ||
++                               p[len-1] == ' '  || p[len-1] == '\t'))
++                p[--len] = '\0';
++        }
++
++        if (WSTRNCASECMP(p, "Host ", 5) == 0 ||
++            WSTRNCASECMP(p, "Host\t", 5) == 0) {
++            val = p + 5;
++            while (*val == ' ' || *val == '\t') val++;
++            inMatchingHost = (strcmp(val, host) == 0) ? 1 : 0;
++        }
++        else if (inMatchingHost &&
++                 (WSTRNCASECMP(p, "IdentityFile ", 13) == 0 ||
++                  WSTRNCASECMP(p, "IdentityFile\t", 13) == 0)) {
++            val = p + 13;
++            while (*val == ' ' || *val == '\t') val++;
++            /* Expand ~ to HOME */
++            if (val[0] == '~' && val[1] == '/') {
++                const char* home = ClientGetHomeDir();
++                if (home != NULL) {
++                    snprintf(identityFile, identityFileSz, "%s%s",
++                             home, val + 1);
++                }
++                else {
++                    snprintf(identityFile, identityFileSz, "%s", val);
++                }
++            }
++            else {
++                snprintf(identityFile, identityFileSz, "%s", val);
++            }
++            found = 1;
++            break;
++        }
++    }
++
++    WFCLOSE(NULL, fp);
++    return found ? 0 : -1;
++#else
++    (void)configPath;
++    (void)host;
++    (void)identityFile;
++    (void)identityFileSz;
++    return -1;
++#endif
++}
++
++
+ /* Set public key to use
+  * returns 0 on success */
+ int ClientUsePubKey(const char* pubKeyName)
+@@ -788,3 +1057,70 @@ void ClientFreeBuffers(void)
+         userPrivateKeyAlloc = 0;
+     }
+ }
++
++
++/* Simple ~/.ssh/config parser: look up User for a given host.
++ * Only supports exact Host matching (no wildcards).
++ * returns 0 on success with user filled, -1 if not found */
++int ClientLookupConfigUser(const char* configPath, const char* host,
++        char* user, int userSz)
++{
++#if !defined(NO_FILESYSTEM)
++    WFILE* fp = NULL;
++    char line[512];
++    int inMatchingHost = 0;
++    int found = 0;
++    int ret;
++
++    if (configPath == NULL || host == NULL || user == NULL || userSz <= 0)
++        return -1;
++
++    ret = WFOPEN(NULL, &fp, configPath, "r");
++    if (ret != 0 || fp == WBADFILE)
++        return -1;
++
++    while (fgets(line, (int)sizeof(line), (FILE*)fp) != NULL) {
++        char* p = line;
++        char* val;
++
++        /* skip leading whitespace */
++        while (*p == ' ' || *p == '\t') p++;
++        /* skip comments and empty lines */
++        if (*p == '#' || *p == '\n' || *p == '\r' || *p == '\0')
++            continue;
++
++        /* strip trailing whitespace/newline */
++        {
++            int len = (int)WSTRLEN(p);
++            while (len > 0 && (p[len-1] == '\n' || p[len-1] == '\r' ||
++                               p[len-1] == ' '  || p[len-1] == '\t'))
++                p[--len] = '\0';
++        }
++
++        if (WSTRNCASECMP(p, "Host ", 5) == 0 ||
++            WSTRNCASECMP(p, "Host\t", 5) == 0) {
++            val = p + 5;
++            while (*val == ' ' || *val == '\t') val++;
++            inMatchingHost = (strcmp(val, host) == 0) ? 1 : 0;
++        }
++        else if (inMatchingHost &&
++                 (WSTRNCASECMP(p, "User ", 5) == 0 ||
++                  WSTRNCASECMP(p, "User\t", 5) == 0)) {
++            val = p + 5;
++            while (*val == ' ' || *val == '\t') val++;
++            snprintf(user, userSz, "%s", val);
++            found = 1;
++            break;
++        }
++    }
++
++    WFCLOSE(NULL, fp);
++    return found ? 0 : -1;
++#else
++    (void)configPath;
++    (void)host;
++    (void)user;
++    (void)userSz;
++    return -1;
++#endif
++}
+diff --git a/wolfssh/apps/wolfssh/common.h b/wolfssh/apps/wolfssh/common.h
+index c5d30b57a845b07eddad0a7d5f5011f986c17037..7b6e0951d6f718f352ad54341aa63bcb512c5ee4 100644
+--- a/wolfssh/apps/wolfssh/common.h
++++ b/wolfssh/apps/wolfssh/common.h
+@@ -25,6 +25,12 @@ WOLFSSH_LOCAL int ClientLoadCA(WOLFSSH_CTX* ctx, const char* caCert);
+ WOLFSSH_LOCAL int ClientUsePubKey(const char* pubKeyName);
+ WOLFSSH_LOCAL int ClientSetPrivateKey(const char* privKeyName);
+ WOLFSSH_LOCAL int ClientUseCert(const char* certName);
++WOLFSSH_LOCAL int ClientUseCertFromKeyFile(const char* keyFileName);
++WOLFSSH_LOCAL int ClientLookupConfigIdentity(const char* configPath,
++        const char* host, char* identityFile, int identityFileSz);
++WOLFSSH_LOCAL int ClientLookupConfigUser(const char* configPath,
++        const char* host, char* user, int userSz);
++WOLFSSH_LOCAL const char* ClientGetHomeDir(void);
+ WOLFSSH_LOCAL int ClientSetEcho(int type);
+ WOLFSSH_LOCAL int ClientUserAuth(byte authType, WS_UserAuthData* authData,
+         void* ctx);
+diff --git a/wolfssh/apps/wolfssh/wolfssh.c b/wolfssh/apps/wolfssh/wolfssh.c
+index f333bfb956152eb1c24b8a39593fb5333b88f475..458cacba47b2107b0a518a158523957f145ae6e0 100644
+--- a/wolfssh/apps/wolfssh/wolfssh.c
++++ b/wolfssh/apps/wolfssh/wolfssh.c
+@@ -24,6 +24,13 @@
+ 
+ #define WOLFSSH_TEST_CLIENT
+ 
++#ifdef WOLFSSH_FWD
++    /* tcp_listen/build_addr from test.h require WOLFSSH_TEST_SERVER */
++    #ifndef WOLFSSH_TEST_SERVER
++        #define WOLFSSH_TEST_SERVER
++    #endif
++#endif
++
+ #ifdef WOLFSSL_USER_SETTINGS
+     #include <wolfssl/wolfcrypt/settings.h>
+ #else
+@@ -47,6 +54,10 @@
+ #include <sys/param.h>
+ #include <libgen.h>
+ 
++#ifndef USE_WINDOWS_API
++    #include <pwd.h>
++#endif
++
+ #ifdef WOLFSSH_SHELL
+     #ifdef HAVE_PTY_H
+         #include <pty.h>
+@@ -57,9 +68,6 @@
+     #ifdef HAVE_TERMIOS_H
+         #include <termios.h>
+     #endif
+-    #ifndef USE_WINDOWS_API
+-        #include <pwd.h>
+-    #endif
+ #endif /* WOLFSSH_SHELL */
+ 
+ #ifdef WOLFSSH_AGENT
+@@ -73,6 +81,13 @@
+     #include <sys/select.h>
+ #endif
+ 
++#ifdef WOLFSSH_FWD
++    #ifndef USE_WINDOWS_API
++        #include <fcntl.h>
++        #include <signal.h>
++    #endif
++#endif
++
+ #ifdef WOLFSSH_CERTS
+     #include <wolfssl/wolfcrypt/asn.h>
+ #endif
+@@ -95,9 +110,18 @@ static void ShowUsage(char* appPath)
+ 
+     printf("%s v%s linked with wolfSSL %s\n", appName,
+         LIBWOLFSSH_VERSION_STRING, LIBWOLFSSL_VERSION_STRING);
+-    printf("usage: %s [-E logfile] [-G] [-l login_name] [-N] [-p port] "
+-            "[-V] destination\n",
+-            appName);
++    printf("usage: %s [-i identity_file] [-l login_name] [-p port]\n"
++           "       %*s [-E logfile] [-G]"
++#ifdef WOLFSSH_FWD
++           " [-L [bind_addr:]port:host:hostport]"
++#endif
++           "\n"
++           "       %*s [-N] [-t] [-V] [-X]\n"
++           "       %*s destination [command]\n",
++           appName,
++           (int)WSTRLEN(appName), "",
++           (int)WSTRLEN(appName), "",
++           (int)WSTRLEN(appName), "");
+ }
+ 
+ 
+@@ -113,7 +137,6 @@ static int NonBlockSSH_connect(WOLFSSH* ssh)
+     int error;
+     SOCKET_T sockfd;
+     int select_ret = 0;
+-
+     ret = wolfSSH_connect(ssh);
+     error = wolfSSH_get_error(ssh);
+     sockfd = (SOCKET_T)wolfSSH_get_fd(ssh);
+@@ -223,10 +246,10 @@ typedef struct thread_args {
+     int  readError;
+ } thread_args;
+ 
+-#ifdef _POSIX_THREADS
++#if defined(_POSIX_THREADS) && !defined(USE_WINDOWS_API)
+     #define THREAD_RET void*
+     #define THREAD_RET_SUCCESS NULL
+-#elif defined(_MSC_VER)
++#elif defined(USE_WINDOWS_API) || defined(_MSC_VER)
+     #define THREAD_RET DWORD WINAPI
+     #define THREAD_RET_SUCCESS 0
+ #else
+@@ -242,7 +265,7 @@ static int sendCurrentWindowSize(thread_args* args)
+     word32 col = 80, row = 24, xpix = 0, ypix = 0;
+ 
+     wc_LockMutex(&args->lock);
+-#if defined(_MSC_VER)
++#if defined(USE_WINDOWS_API) || defined(_MSC_VER)
+     {
+         CONSOLE_SCREEN_BUFFER_INFO cs;
+ 
+@@ -398,11 +421,19 @@ static THREAD_RET readInput(void* in)
+     word32 sz = 0;
+ #ifdef USE_WINDOWS_API
+     HANDLE stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
++    DWORD  stdinMode;
++    int    stdinIsConsole =
++        (GetConsoleMode(stdinHandle, &stdinMode) != FALSE);
+ #endif
+ 
+     while (ret >= 0) {
+         WMEMSET(buf, 0, bufSz);
+     #ifdef USE_WINDOWS_API
++        if (!stdinIsConsole) {
++            /* stdin is redirected/piped — no console input available;
++             * exit silently (OpenSSH-compatible behavior). */
++            return THREAD_RET_SUCCESS;
++        }
+         /* Using A version to avoid potential 2 byte chars */
+         ret = ReadConsoleA(stdinHandle, (void*)buf, bufSz - 1, (DWORD*)&sz,
+                 NULL);
+@@ -412,6 +443,12 @@ static THREAD_RET readInput(void* in)
+         sz  = (word32)ret;
+     #endif
+         if (ret <= 0) {
++        #ifndef USE_WINDOWS_API
++            /* In non-interactive mode stdin is not a TTY; EOF (ret==0)
++             * is expected behavior — exit silently like OpenSSH. */
++            if (!isatty(STDIN_FILENO))
++                return THREAD_RET_SUCCESS;
++        #endif
+             fprintf(stderr, "Error reading stdin\n");
+             return THREAD_RET_SUCCESS;
+         }
+@@ -545,7 +582,13 @@ static THREAD_RET readPeer(void* in)
+ #endif /* WOLFSSH_AGENT */
+                 else if (err == WS_CBIO_ERR_CONN_CLOSE ||
+                          err == WS_SOCKET_ERROR_E ||
+-                         err == WS_MSGID_NOT_ALLOWED_E) {
++                         err == WS_MSGID_NOT_ALLOWED_E ||
++                         err == WS_CHANNEL_CLOSED) {
++                    /* WS_CHANNEL_CLOSED is a normal termination:
++                     * the remote command finished and the server
++                     * closed the channel. Do NOT treat it as an
++                     * error — exit-status has already been stored
++                     * in ssh->exitStatus by DoChannelRequest. */
+                     args->readError = err;
+                     ret = err;
+                     stop = 1;
+@@ -559,14 +602,32 @@ static THREAD_RET readPeer(void* in)
+             else {
+             #ifdef USE_WINDOWS_API
+                 DWORD writtn = 0;
+-            #endif
+-                buf[bufSz - 1] = '\0';
++                byte outBuf[256];
++                word32 outSz = 0;
++                word32 i;
++
++                /* Normalize \r\n to \n: Windows console with
++                 * ENABLE_PROCESSED_OUTPUT treats \r and \n as
++                 * independent line breaks, so \r\n causes a double
++                 * newline. Strip \r that is immediately followed by
++                 * \n to get a single line break. */
++                for (i = 0; i < (word32)ret && outSz < sizeof(outBuf) - 1;
++                     i++) {
++                    if (buf[i] == '\r' && (i + 1) < (word32)ret &&
++                        buf[i + 1] == '\n') {
++                        continue; /* skip \r before \n */
++                    }
++                    outBuf[outSz++] = buf[i];
++                }
+ 
+-            #ifdef USE_WINDOWS_API
+-                if (WriteFile(stdoutHandle, buf, bufSz, &writtn, NULL) == FALSE) {
+-                    err_sys("Failed to write to stdout handle");
++                if (outSz > 0) {
++                    if (WriteFile(stdoutHandle, outBuf, outSz,
++                                  &writtn, NULL) == FALSE) {
++                        err_sys("Failed to write to stdout handle");
++                    }
+                 }
+             #else
++                buf[bufSz - 1] = '\0';
+                 if (write(STDOUT_FILENO, buf, ret) < 0) {
+                     perror("write to stdout error ");
+                 }
+@@ -717,6 +778,22 @@ static int wolfSSH_AGENT_IO_Cb(WS_AgentIoCbAction action,
+ #endif /* WOLFSSH_AGENT */
+ 
+ 
++#ifdef WOLFSSH_FWD
++#define MAX_LOCAL_FWD 16
++
++struct fwd_spec {
++    char   bindHost[64];
++    word16 localPort;
++    char   remoteHost[256];
++    word16 remotePort;
++    char   localSocketPath[256];
++    char   remoteSocketPath[256];
++    byte   isLocalSocket;
++    byte   isRemoteSocket;
++};
++#endif /* WOLFSSH_FWD */
++
++
+ struct config {
+     char* logFile;
+     char* user;
+@@ -726,53 +803,25 @@ struct config {
+     char* command;
+     word32 printConfig:1;
+     word32 noCommand:1;
++    word32 forceX509:1;
++#ifdef WOLFSSH_FWD
++    struct fwd_spec fwdSpecs[MAX_LOCAL_FWD];
++    int    fwdCount;
++#endif
+     word16 port;
+ };
+ 
+ 
+ static int config_init_default(struct config* config)
+ {
+-    char* env;
+-    size_t sz;
+-
+     WMEMSET(config, 0, sizeof(*config));
+     config->port = 22;
+ 
+-    env = getenv("USER");
+-    if (env != NULL) {
+-        char* user;
+-
+-        sz = WSTRLEN(env) + 1;
+-        user = (char*)WMALLOC(sz, NULL, 0);
+-        if (user != NULL) {
+-            strcpy(user, env);
+-            config->user = user;
+-        }
+-    }
+-
+-    env = getenv("HOME");
+-    if (env != NULL) {
+-        const char* defaultName = "/.ssh/id_ecdsa";
+-        const char* pubSuffix = ".pub";
+-        char* keyFile;
+-
+-        sz = WSTRLEN(env) + WSTRLEN(defaultName) + 1;
+-        keyFile = (char*)WMALLOC(sz, NULL, 0);
+-        if (keyFile != NULL) {
+-            strcpy(keyFile, env);
+-            strcat(keyFile, defaultName);
+-            config->keyFile = keyFile;
+-        }
+-
+-        sz += WSTRLEN(pubSuffix);
+-        keyFile = (char*)WMALLOC(sz, NULL, 0);
+-        if (keyFile != NULL) {
+-            strcpy(keyFile, env);
+-            strcat(keyFile, defaultName);
+-            strcat(keyFile, pubSuffix);
+-            config->pubKeyFile = keyFile;
+-        }
+-    }
++    /* user defaults to NULL; resolved later by:
++     * 1. -l command line option
++     * 2. user@host destination
++     * 3. ~/.ssh/config User directive
++     * 4. system user (getpwuid / GetUserName) */
+ 
+     return 0;
+ }
+@@ -783,7 +832,7 @@ static int config_parse_command_line(struct config* config,
+ {
+     int ch;
+ 
+-    while ((ch = mygetopt(argc, argv, "E:Gl:Np:V")) != -1) {
++    while ((ch = mygetopt(argc, argv, "E:Gi:l:L:Np:tVX")) != -1) {
+         switch (ch) {
+             case 'E':
+                 config->logFile = myoptarg;
+@@ -793,9 +842,222 @@ static int config_parse_command_line(struct config* config,
+                 config->printConfig = 1;
+                 break;
+ 
++            case 'i':
++                if (config->keyFile) {
++                    WFREE(config->keyFile, NULL, 0);
++                    config->keyFile = NULL;
++                }
++                if (config->pubKeyFile) {
++                    WFREE(config->pubKeyFile, NULL, 0);
++                    config->pubKeyFile = NULL;
++                }
++                {
++                    size_t sz = WSTRLEN(myoptarg) + 1;
++                    config->keyFile = (char*)WMALLOC(sz, NULL, 0);
++                    if (config->keyFile != NULL) {
++                        strcpy(config->keyFile, myoptarg);
++                    }
++                }
++                break;
++
+             case 'l':
+-                config->user = myoptarg;
++                if (config->user == NULL) {
++                    size_t sz = WSTRLEN(myoptarg) + 1;
++                    config->user = (char*)WMALLOC(sz, NULL, 0);
++                    if (config->user != NULL)
++                        strcpy(config->user, myoptarg);
++                }
++                break;
++
++#ifdef WOLFSSH_FWD
++            case 'L':
++            {
++                /* Parse -L forwarding specification.
++                 * Supported forms (OpenSSH compatible):
++                 *   [bind_address:]port:host:hostport    TCP -> TCP
++                 *   [bind_address:]port:/remote/socket   TCP -> Unix socket
++                 *   /local/socket:host:hostport          Unix socket -> TCP
++                 *   /local/socket:/remote/socket         Unix socket -> Unix socket
++                 */
++                char tmp[512];
++                char* colon1;
++
++                if (config->fwdCount >= MAX_LOCAL_FWD) {
++                    fprintf(stderr, "Too many -L forwards (max %d)\n",
++                            MAX_LOCAL_FWD);
++                    exit(EXIT_FAILURE);
++                }
++
++                WSTRNCPY(tmp, myoptarg, sizeof(tmp) - 1);
++                tmp[sizeof(tmp) - 1] = '\0';
++
++                {
++                    struct fwd_spec* spec =
++                            &config->fwdSpecs[config->fwdCount];
++                    WMEMSET(spec, 0, sizeof(*spec));
++
++                    if (tmp[0] == '/') {
++                        /* Local side is a Unix socket path */
++                        colon1 = strchr(tmp, ':');
++                        if (colon1 == NULL) {
++                            fprintf(stderr,
++                                "Bad local forwarding spec '%s'\n", myoptarg);
++                            exit(EXIT_FAILURE);
++                        }
++                        *colon1 = '\0';
++                        WSTRNCPY(spec->localSocketPath, tmp,
++                                sizeof(spec->localSocketPath) - 1);
++                        spec->isLocalSocket = 1;
++
++                        /* Remote part after the colon */
++                        {
++                            char* remote = colon1 + 1;
++                            if (remote[0] == '/') {
++                                /* /local/socket:/remote/socket */
++                                WSTRNCPY(spec->remoteSocketPath, remote,
++                                        sizeof(spec->remoteSocketPath) - 1);
++                                spec->isRemoteSocket = 1;
++                            }
++                            else {
++                                /* /local/socket:host:hostport */
++                                char* colon2 = strchr(remote, ':');
++                                long val;
++                                if (colon2 == NULL) {
++                                    fprintf(stderr,
++                                        "Bad local forwarding spec '%s'\n",
++                                        myoptarg);
++                                    exit(EXIT_FAILURE);
++                                }
++                                *colon2 = '\0';
++                                WSTRNCPY(spec->remoteHost, remote,
++                                        sizeof(spec->remoteHost) - 1);
++                                val = strtol(colon2 + 1, NULL, 10);
++                                if (val <= 0 || val > 65535) {
++                                    fprintf(stderr,
++                                        "Bad remote port '%s'\n", colon2 + 1);
++                                    exit(EXIT_FAILURE);
++                                }
++                                spec->remotePort = (word16)val;
++                            }
++                        }
++                    }
++                    else {
++                        /* Local side is TCP. Parse colon-separated parts. */
++                        char* p;
++                        char* parts[4];
++                        int nParts = 0;
++                        long val;
++
++                        p = tmp;
++                        parts[nParts++] = p;
++                        while (*p && nParts < 4) {
++                            if (*p == ':') {
++                                *p = '\0';
++                                parts[nParts++] = p + 1;
++                            }
++                            p++;
++                        }
++
++                        if (nParts == 2) {
++                            /* port:/remote/socket */
++                            val = strtol(parts[0], NULL, 10);
++                            if (val <= 0 || val > 65535) {
++                                fprintf(stderr,
++                                    "Bad local port '%s'\n", parts[0]);
++                                exit(EXIT_FAILURE);
++                            }
++                            WSTRNCPY(spec->bindHost, "127.0.0.1",
++                                    sizeof(spec->bindHost));
++                            spec->localPort = (word16)val;
++                            if (parts[1][0] == '/') {
++                                WSTRNCPY(spec->remoteSocketPath, parts[1],
++                                        sizeof(spec->remoteSocketPath) - 1);
++                                spec->isRemoteSocket = 1;
++                            }
++                            else {
++                                fprintf(stderr,
++                                    "Bad local forwarding spec '%s'\n",
++                                    myoptarg);
++                                exit(EXIT_FAILURE);
++                            }
++                        }
++                        else if (nParts == 3) {
++                            /* port:host:hostport  OR
++                             * bind:port:/remote/socket */
++                            if (parts[2][0] == '/') {
++                                /* bind:port:/remote/socket */
++                                WSTRNCPY(spec->bindHost, parts[0],
++                                        sizeof(spec->bindHost) - 1);
++                                val = strtol(parts[1], NULL, 10);
++                                if (val <= 0 || val > 65535) {
++                                    fprintf(stderr,
++                                        "Bad local port '%s'\n", parts[1]);
++                                    exit(EXIT_FAILURE);
++                                }
++                                spec->localPort = (word16)val;
++                                WSTRNCPY(spec->remoteSocketPath, parts[2],
++                                        sizeof(spec->remoteSocketPath) - 1);
++                                spec->isRemoteSocket = 1;
++                            }
++                            else {
++                                /* port:host:hostport */
++                                WSTRNCPY(spec->bindHost, "127.0.0.1",
++                                        sizeof(spec->bindHost));
++                                val = strtol(parts[0], NULL, 10);
++                                if (val <= 0 || val > 65535) {
++                                    fprintf(stderr,
++                                        "Bad local port '%s'\n", parts[0]);
++                                    exit(EXIT_FAILURE);
++                                }
++                                spec->localPort = (word16)val;
++                                WSTRNCPY(spec->remoteHost, parts[1],
++                                        sizeof(spec->remoteHost) - 1);
++                                spec->remoteHost[
++                                    sizeof(spec->remoteHost) - 1] = '\0';
++                                val = strtol(parts[2], NULL, 10);
++                                if (val <= 0 || val > 65535) {
++                                    fprintf(stderr,
++                                        "Bad remote port '%s'\n", parts[2]);
++                                    exit(EXIT_FAILURE);
++                                }
++                                spec->remotePort = (word16)val;
++                            }
++                        }
++                        else if (nParts == 4) {
++                            /* bind_address:port:host:hostport */
++                            WSTRNCPY(spec->bindHost, parts[0],
++                                    sizeof(spec->bindHost) - 1);
++                            spec->bindHost[sizeof(spec->bindHost) - 1] = '\0';
++                            val = strtol(parts[1], NULL, 10);
++                            if (val <= 0 || val > 65535) {
++                                fprintf(stderr,
++                                    "Bad local port '%s'\n", parts[1]);
++                                exit(EXIT_FAILURE);
++                            }
++                            spec->localPort = (word16)val;
++                            WSTRNCPY(spec->remoteHost, parts[2],
++                                    sizeof(spec->remoteHost) - 1);
++                            spec->remoteHost[
++                                sizeof(spec->remoteHost) - 1] = '\0';
++                            val = strtol(parts[3], NULL, 10);
++                            if (val <= 0 || val > 65535) {
++                                fprintf(stderr,
++                                    "Bad remote port '%s'\n", parts[3]);
++                                exit(EXIT_FAILURE);
++                            }
++                            spec->remotePort = (word16)val;
++                        }
++                        else {
++                            fprintf(stderr,
++                                "Bad local forwarding spec '%s'\n", myoptarg);
++                            exit(EXIT_FAILURE);
++                        }
++                    }
++                    config->fwdCount++;
++                }
+                 break;
++            }
++#endif /* WOLFSSH_FWD */
+ 
+             case 'N':
+                 config->noCommand = 1;
+@@ -811,6 +1073,10 @@ static int config_parse_command_line(struct config* config,
+                         LIBWOLFSSL_VERSION_STRING);
+                 exit(EXIT_SUCCESS);
+ 
++            case 'X':
++                config->forceX509 = 1;
++                break;
++
+             default:
+                 ShowUsage(argv[0]);
+                 exit(EXIT_FAILURE);
+@@ -849,13 +1115,12 @@ static int config_parse_command_line(struct config* config,
+         }
+         if (found != NULL) {
+             *found = '\0';
+-            if (config->user) {
+-                WFREE(config->user, NULL, 0);
+-                config->user = NULL;
++            if (config->user == NULL) {
++                sz = WSTRLEN(cursor);
++                config->user = (char*)WMALLOC(sz + 1, NULL, 0);
++                if (config->user != NULL)
++                    strcpy(config->user, cursor);
+             }
+-            sz = WSTRLEN(cursor);
+-            config->user = (char*)WMALLOC(sz + 1, NULL, 0);
+-            strcpy(config->user, cursor);
+             cursor = found + 1;
+         }
+ 
+@@ -900,7 +1165,10 @@ static int config_parse_command_line(struct config* config,
+         cursor = command;
+ 
+         for (i = myoptind; i < argc; i++) {
+-            cursor = stpcpy(cursor, argv[i]);
++            size_t argLen = WSTRLEN(argv[i]);
++
++            WMEMCPY(cursor, argv[i], argLen);
++            cursor += argLen;
+             *cursor = ' ';
+             cursor++;
+         }
+@@ -920,10 +1188,38 @@ static int config_print(struct config* config)
+         printf("port %u\n", config->port);
+         printf("keyFile %s\n", config->keyFile ? config->keyFile : "none");
+         printf("pubKeyFile %s\n",
+-                config->keyFile ? config->keyFile : "none");
++                config->pubKeyFile ? config->pubKeyFile : "none");
+         printf("noCommand %s\n", config->noCommand ? "true" : "false");
++        printf("forceX509 %s\n", config->forceX509 ? "true" : "false");
+         printf("logfile %s\n", config->logFile ? config->logFile : "default");
+         printf("command %s\n", config->command ? config->command : "none");
++#ifdef WOLFSSH_FWD
++        {
++            int i;
++            for (i = 0; i < config->fwdCount; i++) {
++                struct fwd_spec* s = &config->fwdSpecs[i];
++                if (s->isLocalSocket && s->isRemoteSocket) {
++                    printf("localForward %s -> %s\n",
++                            s->localSocketPath, s->remoteSocketPath);
++                }
++                else if (s->isLocalSocket) {
++                    printf("localForward %s -> %s:%u\n",
++                            s->localSocketPath,
++                            s->remoteHost, s->remotePort);
++                }
++                else if (s->isRemoteSocket) {
++                    printf("localForward %s:%u -> %s\n",
++                            s->bindHost, s->localPort,
++                            s->remoteSocketPath);
++                }
++                else {
++                    printf("localForward %s:%u -> %s:%u\n",
++                            s->bindHost, s->localPort,
++                            s->remoteHost, s->remotePort);
++                }
++            }
++        }
++#endif
+     }
+ 
+     return 0;
+@@ -957,6 +1253,518 @@ static int config_cleanup(struct config* config)
+ }
+ 
+ 
++/* Resolve username with OpenSSH-like priority:
++ *   1. -l command line option (already set)
++ *   2. user@host destination (already set)
++ *   3. ~/.ssh/config User directive for matching Host
++ *   4. System user (getpwuid on Unix, GetUserName on Windows) */
++static void config_resolve_user(struct config* config)
++{
++    if (config->user != NULL)
++        return;
++
++    /* SSH config User directive */
++    if (config->hostname != NULL) {
++        const char* home = ClientGetHomeDir();
++        if (home != NULL) {
++            char configPath[256];
++            char userBuf[256];
++            snprintf(configPath, sizeof(configPath), "%s/.ssh/config", home);
++            userBuf[0] = '\0';
++            if (ClientLookupConfigUser(configPath, config->hostname,
++                    userBuf, sizeof(userBuf)) == 0 && userBuf[0] != '\0') {
++                size_t sz = WSTRLEN(userBuf) + 1;
++                config->user = (char*)WMALLOC(sz, NULL, 0);
++                if (config->user != NULL)
++                    strcpy(config->user, userBuf);
++                return;
++            }
++        }
++    }
++
++    /* System user fallback */
++#ifdef USE_WINDOWS_API
++    {
++        char buf[256 + 1];
++        DWORD sz = sizeof(buf);
++        if (GetUserNameA(buf, &sz)) {
++            size_t len = WSTRLEN(buf) + 1;
++            config->user = (char*)WMALLOC(len, NULL, 0);
++            if (config->user != NULL)
++                strcpy(config->user, buf);
++        }
++    }
++#else
++    {
++        struct passwd* pw = getpwuid(getuid());
++        if (pw != NULL && pw->pw_name != NULL) {
++            size_t sz = WSTRLEN(pw->pw_name) + 1;
++            config->user = (char*)WMALLOC(sz, NULL, 0);
++            if (config->user != NULL)
++                strcpy(config->user, pw->pw_name);
++        }
++    }
++#endif
++}
++
++
++/* Resolve identity key file with OpenSSH-like priority:
++ *   1. -i command line option (already set in config->keyFile)
++ *   2. ~/.ssh/config IdentityFile for matching Host
++ *   3. Default: ~/.ssh/id_ecdsa
++ * Also sets pubKeyFile if not using x509. */
++static void config_resolve_key(struct config* config)
++{
++    char* env;
++
++    if (config->keyFile != NULL) {
++        /* Already set by -i option */
++        return;
++    }
++
++    /* Try ~/.ssh/config lookup */
++    if (config->hostname != NULL) {
++        env = getenv("HOME");
++#ifdef USE_WINDOWS_API
++        if (env == NULL)
++            env = getenv("USERPROFILE");
++#endif
++        if (env != NULL) {
++            char configPath[256];
++            static char identity[256];
++
++            snprintf(configPath, sizeof(configPath), "%s/.ssh/config", env);
++            identity[0] = '\0';
++            if (ClientLookupConfigIdentity(configPath, config->hostname,
++                    identity, sizeof(identity)) == 0 && identity[0] != '\0') {
++                size_t sz = WSTRLEN(identity) + 1;
++                config->keyFile = (char*)WMALLOC(sz, NULL, 0);
++                if (config->keyFile != NULL) {
++                    strcpy(config->keyFile, identity);
++                }
++                return;
++            }
++        }
++    }
++
++    /* Fall back to default ~/.ssh/id_ecdsa */
++    env = getenv("HOME");
++#ifdef USE_WINDOWS_API
++    if (env == NULL)
++        env = getenv("USERPROFILE");
++#endif
++    if (env != NULL) {
++        const char* defaultName = "/.ssh/id_ecdsa";
++        const char* pubSuffix = ".pub";
++        size_t sz;
++
++        sz = WSTRLEN(env) + WSTRLEN(defaultName) + 1;
++        config->keyFile = (char*)WMALLOC(sz, NULL, 0);
++        if (config->keyFile != NULL) {
++            strcpy(config->keyFile, env);
++            strcat(config->keyFile, defaultName);
++        }
++
++        sz += WSTRLEN(pubSuffix);
++        config->pubKeyFile = (char*)WMALLOC(sz, NULL, 0);
++        if (config->pubKeyFile != NULL) {
++            strcpy(config->pubKeyFile, env);
++            strcat(config->pubKeyFile, defaultName);
++            strcat(config->pubKeyFile, pubSuffix);
++        }
++    }
++}
++
++
++#ifdef WOLFSSH_FWD
++#ifndef FWD_BUFFER_SZ
++    #define FWD_BUFFER_SZ 4096
++#endif
++#ifndef MAX_FWD_CLIENTS
++    #define MAX_FWD_CLIENTS 64
++#endif
++
++struct fwd_client {
++    SOCKET_T         appFd;
++    WOLFSSH_CHANNEL* channel;
++    word32           channelId;
++    byte             appBuf[FWD_BUFFER_SZ];
++    word32           appBufUsed;
++};
++
++static int findMaxFd(int a, int b)
++{
++    return (a > b) ? a : b;
++}
++
++/* Run local port forwarding loop:
++ *   For each -L spec, listen on bindHost:localPort or a Unix socket path.
++ *   Accept incoming connections, open a direct-tcpip or
++ *   direct-streamlocal@openssh.com channel for each, and relay data
++ *   bidirectionally. Supports multiple listeners and multiple concurrent
++ *   forwarded connections per listener.
++ */
++static int localForwardLoop(WOLFSSH* ssh, struct config* config)
++{
++    SOCKET_T listenFds[MAX_LOCAL_FWD];
++    int      nListeners = 0;
++    struct fwd_client clients[MAX_FWD_CLIENTS];
++    int      nClients = 0;
++    SOCKET_T sshFd;
++    fd_set   rxFds, errFds;
++    int      nFds;
++    int      ret;
++    int      i;
++    struct timeval to;
++    byte     sshBuf[FWD_BUFFER_SZ];
++
++    sshFd = (SOCKET_T)wolfSSH_get_fd(ssh);
++
++#ifndef USE_WINDOWS_API
++    signal(SIGPIPE, SIG_IGN);
++#endif
++
++    /* Set up listeners for each -L spec */
++    for (i = 0; i < config->fwdCount; i++) {
++        SOCKET_T lfd;
++        struct fwd_spec* spec = &config->fwdSpecs[i];
++
++#ifdef WOLFSSH_HAVE_UNIX_SOCKET
++        if (spec->isLocalSocket) {
++            struct sockaddr_un unAddr;
++
++            /* Remove stale socket file if it exists */
++#ifdef USE_WINDOWS_API
++            DeleteFileA(spec->localSocketPath);
++#else
++            unlink(spec->localSocketPath);
++#endif
++
++            unix_socket(&lfd);
++            build_addr_unix(&unAddr, spec->localSocketPath);
++
++            if (bind(lfd, (struct sockaddr*)&unAddr, sizeof(unAddr)) < 0) {
++                fprintf(stderr, "Failed to bind Unix socket %s: %s\n",
++                        spec->localSocketPath, strerror(errno));
++                WCLOSESOCKET(lfd);
++                continue;
++            }
++            if (listen(lfd, 5) < 0) {
++                fprintf(stderr, "Failed to listen on Unix socket %s: %s\n",
++                        spec->localSocketPath, strerror(errno));
++                WCLOSESOCKET(lfd);
++#ifdef USE_WINDOWS_API
++                DeleteFileA(spec->localSocketPath);
++#else
++                unlink(spec->localSocketPath);
++#endif
++                continue;
++            }
++            listenFds[nListeners] = lfd;
++            nListeners++;
++            if (spec->isRemoteSocket) {
++                fprintf(stderr, "Forwarding %s -> %s\n",
++                        spec->localSocketPath, spec->remoteSocketPath);
++            }
++            else {
++                fprintf(stderr, "Forwarding %s -> %s:%u\n",
++                        spec->localSocketPath,
++                        spec->remoteHost, spec->remotePort);
++            }
++        }
++        else
++#endif /* WOLFSSH_HAVE_UNIX_SOCKET */
++        {
++            SOCKADDR_IN_T bindAddr;
++            int on = 1;
++
++            build_addr(&bindAddr, spec->bindHost, spec->localPort);
++            tcp_socket(&lfd,
++                    ((struct sockaddr_in *)&bindAddr)->sin_family);
++            setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
++
++            if (bind(lfd, (struct sockaddr*)&bindAddr,
++                        sizeof(bindAddr)) < 0) {
++                fprintf(stderr, "Failed to bind %s:%u: %s\n",
++                        spec->bindHost, spec->localPort,
++                        strerror(errno));
++                WCLOSESOCKET(lfd);
++                continue;
++            }
++            if (listen(lfd, 5) < 0) {
++                fprintf(stderr, "Failed to listen on %s:%u: %s\n",
++                        spec->bindHost, spec->localPort,
++                        strerror(errno));
++                WCLOSESOCKET(lfd);
++                continue;
++            }
++            listenFds[nListeners] = lfd;
++            nListeners++;
++            if (spec->isRemoteSocket) {
++                fprintf(stderr, "Forwarding %s:%u -> %s\n",
++                        spec->bindHost, spec->localPort,
++                        spec->remoteSocketPath);
++            }
++            else {
++                fprintf(stderr, "Forwarding %s:%u -> %s:%u\n",
++                        spec->bindHost, spec->localPort,
++                        spec->remoteHost, spec->remotePort);
++            }
++        }
++    }
++
++    if (nListeners == 0) {
++        fprintf(stderr, "No forwarding listeners could be established\n");
++        return -1;
++    }
++
++    for (;;) {
++        FD_ZERO(&rxFds);
++        FD_ZERO(&errFds);
++
++        FD_SET(sshFd, &rxFds);
++        FD_SET(sshFd, &errFds);
++        nFds = (int)sshFd + 1;
++
++        for (i = 0; i < nListeners; i++) {
++            FD_SET(listenFds[i], &rxFds);
++            nFds = findMaxFd(nFds, (int)listenFds[i] + 1);
++        }
++
++        for (i = 0; i < nClients; i++) {
++            FD_SET(clients[i].appFd, &rxFds);
++            FD_SET(clients[i].appFd, &errFds);
++            nFds = findMaxFd(nFds, (int)clients[i].appFd + 1);
++        }
++
++        to.tv_sec = 1;
++        to.tv_usec = 0;
++        ret = select(nFds, &rxFds, NULL, &errFds, &to);
++        if (ret < 0) {
++            if (errno == EINTR)
++                continue;
++            perror("select");
++            break;
++        }
++        if (ret == 0) {
++            /* Timeout: still flush any pending client buffers */
++            for (i = 0; i < nClients; i++) {
++                if (clients[i].appBufUsed > 0 && clients[i].channel != NULL) {
++                    int sr = wolfSSH_ChannelSend(clients[i].channel,
++                            clients[i].appBuf, clients[i].appBufUsed);
++                    if (sr > 0) {
++                        if ((word32)sr < clients[i].appBufUsed)
++                            WMEMMOVE(clients[i].appBuf,
++                                    clients[i].appBuf + sr,
++                                    clients[i].appBufUsed - sr);
++                        clients[i].appBufUsed -= sr;
++                    }
++                }
++            }
++            continue;
++        }
++
++        /* Check for SSH connection errors */
++        if (FD_ISSET(sshFd, &errFds)) {
++            fprintf(stderr, "SSH connection error\n");
++            break;
++        }
++
++        /* Accept new local connections from any listener */
++        for (i = 0; i < nListeners; i++) {
++            if (FD_ISSET(listenFds[i], &rxFds)) {
++                SOCKADDR_IN_T peerAddr;
++                socklen_t peerAddrSz = sizeof(peerAddr);
++                SOCKET_T newFd;
++
++                newFd = accept(listenFds[i],
++                        (struct sockaddr*)&peerAddr, &peerAddrSz);
++                if (newFd < 0) {
++                    perror("accept");
++                    continue;
++                }
++                if (nClients >= MAX_FWD_CLIENTS) {
++                    fprintf(stderr,
++                        "Max forwarded connections reached, rejecting\n");
++                    WCLOSESOCKET(newFd);
++                    continue;
++                }
++
++                {
++                    WOLFSSH_CHANNEL* ch;
++                    struct fwd_spec* spec = &config->fwdSpecs[i];
++
++                    if (spec->isRemoteSocket) {
++                        ch = wolfSSH_ChannelFwdNewStreamLocal(ssh,
++                                spec->remoteSocketPath);
++                    }
++                    else {
++                        ch = wolfSSH_ChannelFwdNewLocal(ssh,
++                                spec->remoteHost, spec->remotePort,
++                                spec->bindHost, spec->localPort);
++                    }
++                    if (ch == NULL) {
++                        if (spec->isRemoteSocket) {
++                            fprintf(stderr,
++                                "Failed to open streamlocal channel to %s"
++                                " (err=%d)\n",
++                                spec->remoteSocketPath,
++                                wolfSSH_get_error(ssh));
++                        }
++                        else {
++                            fprintf(stderr,
++                                "Failed to open forwarding channel to %s:%u"
++                                " (err=%d)\n",
++                                spec->remoteHost, spec->remotePort,
++                                wolfSSH_get_error(ssh));
++                        }
++                        WCLOSESOCKET(newFd);
++                        continue;
++                    }
++
++                    WMEMSET(&clients[nClients], 0, sizeof(clients[0]));
++                    clients[nClients].appFd = newFd;
++                    clients[nClients].channel = ch;
++                    wolfSSH_ChannelGetId(ch,
++                            &clients[nClients].channelId,
++                            WS_CHANNEL_ID_SELF);
++                    nClients++;
++                }
++            }
++        }
++
++        /* Read from local app clients → SSH channels */
++        for (i = 0; i < nClients; i++) {
++            if (FD_ISSET(clients[i].appFd, &errFds)) {
++                /* Client socket error — mark for removal */
++                goto remove_client;
++            }
++            if (FD_ISSET(clients[i].appFd, &rxFds)) {
++                int rxd = (int)recv(clients[i].appFd,
++                        clients[i].appBuf + clients[i].appBufUsed,
++                        FWD_BUFFER_SZ - clients[i].appBufUsed, 0);
++                if (rxd <= 0) {
++                    /* Client disconnected */
++                    goto remove_client;
++                }
++                clients[i].appBufUsed += rxd;
++            }
++
++            /* Flush pending data to SSH channel */
++            if (clients[i].appBufUsed > 0 && clients[i].channel != NULL) {
++                ret = wolfSSH_ChannelSend(clients[i].channel,
++                        clients[i].appBuf, clients[i].appBufUsed);
++                if (ret > 0) {
++                    if ((word32)ret < clients[i].appBufUsed) {
++                        WMEMMOVE(clients[i].appBuf,
++                                clients[i].appBuf + ret,
++                                clients[i].appBufUsed - ret);
++                    }
++                    clients[i].appBufUsed -= ret;
++                }
++                else if (ret != WS_CHANNEL_NOT_CONF &&
++                         ret != WS_CHAN_RXD &&
++                         ret != WS_WANT_WRITE &&
++                         ret != WS_WANT_READ) {
++                    goto remove_client;
++                }
++            }
++            continue;
++
++        remove_client:
++            WCLOSESOCKET(clients[i].appFd);
++            if (clients[i].channel != NULL)
++                wolfSSH_ChannelExit(clients[i].channel);
++            /* Shift remaining clients down */
++            if (i < nClients - 1) {
++                WMEMMOVE(&clients[i], &clients[i + 1],
++                        sizeof(struct fwd_client) * (nClients - 1 - i));
++            }
++            nClients--;
++            i--; /* Re-check this index */
++        }
++
++        /* Read from SSH → distribute to local clients */
++        if (FD_ISSET(sshFd, &rxFds)) {
++            word32 channelId = 0;
++
++            ret = wolfSSH_worker(ssh, &channelId);
++            if (ret == WS_CHAN_RXD) {
++                WOLFSSH_CHANNEL* readCh;
++                int readRet;
++
++                readCh = wolfSSH_ChannelFind(ssh,
++                        channelId, WS_CHANNEL_ID_SELF);
++                if (readCh != NULL) {
++                    readRet = wolfSSH_ChannelRead(readCh,
++                            sshBuf, FWD_BUFFER_SZ);
++                    if (readRet > 0) {
++                        /* Find the client for this channel */
++                        for (i = 0; i < nClients; i++) {
++                            if (clients[i].channelId == channelId) {
++                                send(clients[i].appFd,
++                                        sshBuf, readRet, 0);
++                                break;
++                            }
++                        }
++                    }
++                }
++            }
++            else if (ret == WS_CHANNEL_CLOSED) {
++                /* A channel closed — find and remove client */
++                for (i = 0; i < nClients; i++) {
++                    if (clients[i].channelId == channelId) {
++                        WCLOSESOCKET(clients[i].appFd);
++                        if (i < nClients - 1) {
++                            WMEMMOVE(&clients[i], &clients[i + 1],
++                                sizeof(struct fwd_client) *
++                                    (nClients - 1 - i));
++                        }
++                        nClients--;
++                        break;
++                    }
++                }
++                /* Check if SSH itself is dead */
++                if (wolfSSH_get_error(ssh) == WS_SOCKET_ERROR_E ||
++                    wolfSSH_get_error(ssh) == WS_CBIO_ERR_CONN_CLOSE) {
++                    fprintf(stderr, "SSH connection lost\n");
++                    break;
++                }
++            }
++            else if (ret == WS_EOF || ret == WS_FATAL_ERROR) {
++                int err = wolfSSH_get_error(ssh);
++                if (err == WS_SOCKET_ERROR_E ||
++                    err == WS_CBIO_ERR_CONN_CLOSE) {
++                    fprintf(stderr, "SSH connection closed\n");
++                    break;
++                }
++            }
++        }
++    }
++
++    /* Cleanup */
++    for (i = 0; i < nClients; i++)
++        WCLOSESOCKET(clients[i].appFd);
++    for (i = 0; i < nListeners; i++)
++        WCLOSESOCKET(listenFds[i]);
++#ifdef WOLFSSH_HAVE_UNIX_SOCKET
++    /* Remove local Unix socket files */
++    for (i = 0; i < config->fwdCount; i++) {
++        if (config->fwdSpecs[i].isLocalSocket) {
++#ifdef USE_WINDOWS_API
++            DeleteFileA(config->fwdSpecs[i].localSocketPath);
++#else
++            unlink(config->fwdSpecs[i].localSocketPath);
++#endif
++        }
++    }
++#endif
++
++    return 0;
++}
++#endif /* WOLFSSH_FWD */
++
++
+ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
+ {
+     WOLFSSH_CTX* ctx = NULL;
+@@ -966,7 +1774,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
+     socklen_t clientAddrSz = sizeof(clientAddr);
+     int ret = 0;
+     int ioErr = 0;
+-    byte keepOpen = 1;
++    byte keepOpen = 0;
+ #ifdef USE_WINDOWS_API
+     byte rawMode = 0;
+ #endif
+@@ -983,14 +1791,38 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
+     config_init_default(&config);
+     config_parse_command_line(&config,
+             ((func_args*)args)->argc, ((func_args*)args)->argv);
++    config_resolve_user(&config);
++    config_resolve_key(&config);
+     config_print(&config);
+ 
++    if (config.printConfig) {
++        config_cleanup(&config);
++        ((func_args*)args)->return_code = 0;
++        return 0;
++    }
++
+     if (config.user == NULL)
+         err_sys("client requires a username parameter.");
+ 
+     if (config.hostname == NULL)
+         err_sys("client requires a hostname parameter.");
+ 
++    /* If no command and not -N, default to interactive shell (PTY)
++     * but only when stdin is a real terminal */
++    if (config.command == NULL && !config.noCommand) {
++#ifdef WOLFSSH_FWD
++        if (config.fwdCount > 0) {
++            /* Forwarding mode: keep session alive without PTY */
++            config.noCommand = 1;
++        }
++        else
++#endif
++        if (isatty(STDIN_FILENO))
++            keepOpen = 1;
++        else
++            config.noCommand = 1; /* no tty, no command → nothing to do */
++    }
++
+ #ifdef SINGLE_THREADED
+     if (keepOpen)
+         err_sys("Threading needed for terminal session\n");
+@@ -1000,8 +1832,14 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
+         ret = ClientSetPrivateKey(config.keyFile);
+         if (ret == 0) {
+         #ifdef WOLFSSH_CERTS
+-            /* passed in certificate to use */
+-            if (certName) {
++            /* Try to extract certificate from composite key file first */
++            ret = ClientUseCertFromKeyFile(config.keyFile);
++            if (ret == 0) {
++                /* Certificate found in key file, x509 mode auto-enabled */
++                config.forceX509 = 1;
++            }
++            else if (certName) {
++                /* Explicit certificate provided */
+                 (void)ClientUseCert(certName);
+             }
+             else
+@@ -1036,6 +1874,20 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
+     if (ssh == NULL)
+         err_sys("Couldn't create wolfSSH session.");
+ 
++#ifdef WOLFSSH_CERTS
++    if (config.forceX509) {
++        /* Set x509 public key algo list to prioritize cert-based auth */
++        wolfSSH_SetAlgoListKey(ssh,
++            "x509v3-ecdsa-sha2-nistp256,"
++            "x509v3-ecdsa-sha2-nistp384,"
++            "x509v3-ecdsa-sha2-nistp521,"
++            "x509v3-ssh-rsa,"
++            "ecdsa-sha2-nistp256,"
++            "rsa-sha2-256,"
++            "ssh-rsa");
++    }
++#endif
++
+ #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
+     wolfSSH_SetGlobalReq(ctx, callbackGlobalReq);
+     wolfSSH_SetGlobalReqCtx(ssh, &ssh); /* dummy ctx */
+@@ -1068,6 +1920,19 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
+     if (ret != WS_SUCCESS)
+         err_sys("Couldn't set the session's socket.");
+ 
++#ifdef WOLFSSH_FWD
++    if (config.fwdCount > 0 && config.command == NULL) {
++        /* For forwarding-only mode (-L without command), run a long sleep
++         * to keep the session channel alive on the server side */
++        static const char fwdKeepCmd[] = "sleep 86400";
++        ret = wolfSSH_SetChannelType(ssh, WOLFSSH_SESSION_EXEC,
++                            (byte*)fwdKeepCmd,
++                            (word32)WSTRLEN(fwdKeepCmd));
++        if (ret != WS_SUCCESS)
++            err_sys("Couldn't set the channel type for forwarding.");
++    }
++#endif
++
+     if (config.command != NULL) {
+         ret = wolfSSH_SetChannelType(ssh, WOLFSSH_SESSION_EXEC,
+                             (byte*)config.command,
+@@ -1088,7 +1953,32 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
+     if (ret != WS_SUCCESS)
+         err_sys("Couldn't connect SSH stream.");
+ 
+-    MODES_CLEAR();
++#ifdef WOLFSSH_FWD
++    if (config.fwdCount > 0) {
++        /* Switch SSH socket back to blocking for select() loop */
++#ifndef USE_WINDOWS_API
++        {
++            int flags = fcntl(sockFd, F_GETFL, 0);
++            if (flags >= 0)
++                fcntl(sockFd, F_SETFL, flags & ~O_NONBLOCK);
++        }
++#endif
++        localForwardLoop(ssh, &config);
++        goto fwd_cleanup;
++    }
++#endif /* WOLFSSH_FWD */
++
++    if (keepOpen)
++        MODES_CLEAR();
++
++#ifdef USE_WINDOWS_API
++    if (keepOpen) {
++        /* Disable console local echo in PTY mode.
++         * The remote PTY handles echo; local echo would cause
++         * double line breaks (CMD echo + server echo). */
++        ClientSetEcho(2);
++    }
++#endif
+ 
+ #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS)
+ #if 0
+@@ -1097,7 +1987,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
+ #endif
+ 
+     if (config.command != NULL || keepOpen == 1) {
+-    #if defined(_POSIX_THREADS)
++    #if defined(_POSIX_THREADS) && !defined(USE_WINDOWS_API)
+         thread_args arg;
+         pthread_t   thread[3];
+ 
+@@ -1141,7 +2031,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
+         wolfSSH_SEMAPHORE_Release(&windowSem);
+ #endif /* WOLFSSH_TERM */
+         ioErr = arg.readError;
+-    #elif defined(_MSC_VER)
++    #elif defined(USE_WINDOWS_API) || defined(_MSC_VER)
+         thread_args arg;
+         HANDLE thread[2];
+ 
+@@ -1176,6 +2066,9 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
+     }
+ #endif
+ 
++#ifdef WOLFSSH_FWD
++fwd_cleanup:
++#endif
+     ret = wolfSSH_shutdown(ssh);
+     /* do not continue on with shutdown process if peer already disconnected */
+     if (ret != WS_SOCKET_ERROR_E
+@@ -1200,13 +2093,19 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
+ #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
+     ((func_args*)args)->return_code = wolfSSH_GetExitStatus(ssh);
+ #endif
+-    if (ioErr != 0 && ((func_args*)args)->return_code == 0) {
++    /* Only override exit status for real I/O errors, not for
++     * normal channel close (WS_CHANNEL_CLOSED) which happens
++     * when the remote command finishes and the server closes
++     * the channel. */
++    if (ioErr != 0 && ioErr != WS_CHANNEL_CLOSED &&
++        ((func_args*)args)->return_code == 0) {
+         ((func_args*)args)->return_code = 1;
+     }
+ 
+     wolfSSH_free(ssh);
+     wolfSSH_CTX_free(ctx);
+-    if ((ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E) || ioErr != 0) {
++    if ((ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E) ||
++        (ioErr != 0 && ioErr != WS_CHANNEL_CLOSED)) {
+         WLOG(WS_LOG_DEBUG, "Closing client stream failed");
+     #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)
+         /* override return value, do not want to return success if connection
+diff --git a/wolfssh/examples/client/client.c b/wolfssh/examples/client/client.c
+index a6f3a7befda2eabc9ffc03707963be18e59593f9..6dc0e4dc87d9070652b4357b415514ec14685a0b 100644
+--- a/wolfssh/examples/client/client.c
++++ b/wolfssh/examples/client/client.c
+@@ -190,10 +190,10 @@ typedef struct thread_args {
+     byte quit;
+ } thread_args;
+ 
+-#ifdef _POSIX_THREADS
++#if defined(_POSIX_THREADS) && !defined(USE_WINDOWS_API)
+     #define THREAD_RET void*
+     #define THREAD_RET_SUCCESS NULL
+-#elif defined(_MSC_VER)
++#elif defined(USE_WINDOWS_API) || defined(_MSC_VER)
+     #define THREAD_RET DWORD WINAPI
+     #define THREAD_RET_SUCCESS 0
+ #else
+@@ -209,7 +209,7 @@ static int sendCurrentWindowSize(thread_args* args)
+     word32 col = 80, row = 24, xpix = 0, ypix = 0;
+ 
+     wc_LockMutex(&args->lock);
+-#if defined(_MSC_VER)
++#if defined(USE_WINDOWS_API) || defined(_MSC_VER)
+     {
+         CONSOLE_SCREEN_BUFFER_INFO cs;
+ 
+@@ -1070,7 +1070,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
+         ClientSetEcho(2);
+ 
+     if (cmd != NULL || keepOpen == 1) {
+-    #if defined(_POSIX_THREADS)
++    #if defined(_POSIX_THREADS) && !defined(USE_WINDOWS_API)
+         thread_args arg;
+         pthread_t   thread[3];
+ 
+@@ -1110,7 +1110,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
+ #ifdef WOLFSSH_TERM
+         wolfSSH_SEMAPHORE_Release(&windowSem);
+ #endif /* WOLFSSH_TERM */
+-    #elif defined(_MSC_VER)
++    #elif defined(USE_WINDOWS_API) || defined(_MSC_VER)
+         thread_args arg;
+         HANDLE thread[2];
+ 
+diff --git a/wolfssh/examples/client/common.c b/wolfssh/examples/client/common.c
+index 2a40b8e87b38243066d78333fafed6db4a47fdf0..7fdd0e4b40df108ec3ab4066eed8a98651fc9437 100644
+--- a/wolfssh/examples/client/common.c
++++ b/wolfssh/examples/client/common.c
+@@ -33,6 +33,7 @@
+ #include <wolfssl/wolfcrypt/ecc.h>
+ #include <wolfssl/wolfcrypt/error-crypt.h>
+ #include <wolfssl/wolfcrypt/coding.h>
++#include <wolfssl/wolfcrypt/asn_public.h>
+ 
+ #ifdef WOLFSSH_TPM
+     #include <wolftpm/tpm2_wrap.h>
+@@ -441,7 +442,7 @@ int ClientPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
+                     }
+                 }
+             }
+-            FreeDecodedCert(&dCert);
++            wc_FreeDecodedCert(&dCert);
+         }
+     }
+ #else
+@@ -733,6 +734,7 @@ int ClientSetEcho(int type)
+ 
+ 
+ /* Set certificate to use and public key.
++ * Supports both DER and PEM format (including cert chains in PEM).
+  * returns 0 on success */
+ int ClientUseCert(const char* certName, void* heap)
+ {
+@@ -740,11 +742,90 @@ int ClientUseCert(const char* certName, void* heap)
+ 
+     if (certName != NULL) {
+     #ifdef WOLFSSH_CERTS
+-        ret = load_der_file(certName, &userPublicKey, &userPublicKeySz, heap);
++        byte* raw = NULL;
++        word32 rawSz = 0;
++
++        ret = load_der_file(certName, &raw, &rawSz, heap);
+         if (ret == 0) {
+-            userPublicKeyType = publicKeyType;
+-            userPublicKeyTypeSz = (word32)WSTRLEN((const char*)publicKeyType);
+-            pubKeyLoaded = 1;
++            const char* pemHeader = "-----BEGIN CERTIFICATE-----";
++            int beginLen = (int)WSTRLEN(pemHeader);
++
++            if (rawSz > (word32)beginLen &&
++                WSTRNSTR((const char*)raw, pemHeader, rawSz) != NULL) {
++                /* PEM format: convert each cert block to DER and
++                 * concatenate into a single buffer */
++                byte* combined = NULL;
++                word32 combinedSz = 0;
++                word32 certCount = 0;
++                const char* p = (const char*)raw;
++                const char* end = (const char*)raw + rawSz;
++
++                while (p < end) {
++                    const char* begin = WSTRNSTR(p, pemHeader,
++                                                 (word32)(end - p));
++                    if (begin == NULL)
++                        break;
++
++                    const char* endMarker = "-----END CERTIFICATE-----";
++                    const char* blockEnd = WSTRNSTR(begin, endMarker,
++                                                    (word32)(end - begin));
++                    if (blockEnd == NULL)
++                        break;
++                    blockEnd += WSTRLEN(endMarker);
++                    while (blockEnd < end &&
++                           (*blockEnd == '\r' || *blockEnd == '\n'))
++                        blockEnd++;
++
++                    int pemBlockSz = (int)(blockEnd - begin);
++                    byte derBuf[4096];
++                    int derSz = wc_CertPemToDer(
++                        (const unsigned char*)begin, pemBlockSz,
++                        derBuf, (int)sizeof(derBuf), CERT_TYPE);
++
++                    if (derSz > 0) {
++                        byte* tmp = (byte*)WMALLOC(combinedSz + derSz, heap, 0);
++                        if (tmp == NULL) {
++                            ret = -1;
++                            break;
++                        }
++                        if (combined != NULL) {
++                            WMEMCPY(tmp, combined, combinedSz);
++                            WFREE(combined, heap, 0);
++                        }
++                        WMEMCPY(tmp + combinedSz, derBuf, derSz);
++                        combined = tmp;
++                        combinedSz += derSz;
++                        certCount++;
++                    }
++
++                    p = blockEnd;
++                }
++
++                WFREE(raw, heap, 0);
++
++                if (ret == 0 && certCount > 0 && combined != NULL) {
++                    userPublicKey = combined;
++                    userPublicKeySz = combinedSz;
++                    userPublicKeyType = publicKeyType;
++                    userPublicKeyTypeSz =
++                        (word32)WSTRLEN((const char*)publicKeyType);
++                    pubKeyLoaded = 1;
++                }
++                else {
++                    if (combined != NULL)
++                        WFREE(combined, heap, 0);
++                    if (ret == 0) ret = -1;
++                }
++            }
++            else {
++                /* DER format: use as-is (original behavior) */
++                userPublicKey = raw;
++                userPublicKeySz = rawSz;
++                userPublicKeyType = publicKeyType;
++                userPublicKeyTypeSz =
++                    (word32)WSTRLEN((const char*)publicKeyType);
++                pubKeyLoaded = 1;
++            }
+         }
+     #else
+         (void)heap;
+@@ -756,6 +837,36 @@ int ClientUseCert(const char* certName, void* heap)
+     return ret;
+ }
+ 
++
++/* Extract certificate(s) from a composite PEM file that contains both
++ * a private key and certificate(s).
++ * returns 0 on success, -1 if no certificate found */
++int ClientUseCertFromKeyFile(const char* keyFileName, void* heap)
++{
++    int ret = -1;
++
++#ifdef WOLFSSH_CERTS
++    if (keyFileName != NULL && pubKeyLoaded == 0) {
++        byte* raw = NULL;
++        word32 rawSz = 0;
++
++        if (load_der_file(keyFileName, &raw, &rawSz, heap) == 0) {
++            if (rawSz > 27 &&
++                WSTRNSTR((const char*)raw, "-----BEGIN CERTIFICATE-----",
++                         rawSz) != NULL) {
++                ret = ClientUseCert(keyFileName, heap);
++            }
++            WFREE(raw, heap, 0);
++        }
++    }
++#else
++    (void)keyFileName;
++    (void)heap;
++#endif
++
++    return ret;
++}
++
+ #ifdef WOLFSSH_TPM
+ 
+ static int readKeyBlob(const char* filename, WOLFTPM2_KEYBLOB* key)
+@@ -1138,3 +1249,155 @@ void ClientFreeBuffers(const char* pubKeyName, const char* privKeyName,
+     WFREE(keyboardResponseLengths, NULL, 0);
+ #endif
+ }
++
++
++/* Simple ~/.ssh/config parser: look up IdentityFile for a given host.
++ * Only supports exact Host matching (no wildcards).
++ * returns 0 on success with identityFile filled, -1 if not found */
++int ClientLookupConfigIdentity(const char* configPath, const char* host,
++        char* identityFile, int identityFileSz)
++{
++#if !defined(NO_FILESYSTEM)
++    WFILE* fp = NULL;
++    char line[512];
++    int inMatchingHost = 0;
++    int found = 0;
++    int ret;
++
++    if (configPath == NULL || host == NULL ||
++            identityFile == NULL || identityFileSz <= 0)
++        return -1;
++
++    ret = WFOPEN(NULL, &fp, configPath, "r");
++    if (ret != 0 || fp == WBADFILE)
++        return -1;
++
++    while (fgets(line, (int)sizeof(line), (FILE*)fp) != NULL) {
++        char* p = line;
++        char* val;
++
++        /* skip leading whitespace */
++        while (*p == ' ' || *p == '\t') p++;
++        /* skip comments and empty lines */
++        if (*p == '#' || *p == '\n' || *p == '\r' || *p == '\0')
++            continue;
++
++        /* strip trailing whitespace/newline */
++        {
++            int len = (int)WSTRLEN(p);
++            while (len > 0 && (p[len-1] == '\n' || p[len-1] == '\r' ||
++                               p[len-1] == ' '  || p[len-1] == '\t'))
++                p[--len] = '\0';
++        }
++
++        if (WSTRNCASECMP(p, "Host ", 5) == 0 ||
++            WSTRNCASECMP(p, "Host\t", 5) == 0) {
++            val = p + 5;
++            while (*val == ' ' || *val == '\t') val++;
++            inMatchingHost = (strcmp(val, host) == 0) ? 1 : 0;
++        }
++        else if (inMatchingHost &&
++                 (WSTRNCASECMP(p, "IdentityFile ", 13) == 0 ||
++                  WSTRNCASECMP(p, "IdentityFile\t", 13) == 0)) {
++            val = p + 13;
++            while (*val == ' ' || *val == '\t') val++;
++            /* Expand ~ to HOME */
++            if (val[0] == '~' && val[1] == '/') {
++                const char* home = getenv("HOME");
++#ifdef USE_WINDOWS_API
++                if (home == NULL)
++                    home = getenv("USERPROFILE");
++#endif
++                if (home != NULL) {
++                    snprintf(identityFile, identityFileSz, "%s%s",
++                             home, val + 1);
++                }
++                else {
++                    snprintf(identityFile, identityFileSz, "%s", val);
++                }
++            }
++            else {
++                snprintf(identityFile, identityFileSz, "%s", val);
++            }
++            found = 1;
++            break;
++        }
++    }
++
++    WFCLOSE(NULL, fp);
++    return found ? 0 : -1;
++#else
++    (void)configPath;
++    (void)host;
++    (void)identityFile;
++    (void)identityFileSz;
++    return -1;
++#endif
++}
++
++
++/* Simple ~/.ssh/config parser: look up User for a given host.
++ * Only supports exact Host matching (no wildcards).
++ * returns 0 on success with user filled, -1 if not found */
++int ClientLookupConfigUser(const char* configPath, const char* host,
++        char* user, int userSz)
++{
++#if !defined(NO_FILESYSTEM)
++    WFILE* fp = NULL;
++    char line[512];
++    int inMatchingHost = 0;
++    int found = 0;
++    int ret;
++
++    if (configPath == NULL || host == NULL || user == NULL || userSz <= 0)
++        return -1;
++
++    ret = WFOPEN(NULL, &fp, configPath, "r");
++    if (ret != 0 || fp == WBADFILE)
++        return -1;
++
++    while (fgets(line, (int)sizeof(line), (FILE*)fp) != NULL) {
++        char* p = line;
++        char* val;
++
++        /* skip leading whitespace */
++        while (*p == ' ' || *p == '\t') p++;
++        /* skip comments and empty lines */
++        if (*p == '#' || *p == '\n' || *p == '\r' || *p == '\0')
++            continue;
++
++        /* strip trailing whitespace/newline */
++        {
++            int len = (int)WSTRLEN(p);
++            while (len > 0 && (p[len-1] == '\n' || p[len-1] == '\r' ||
++                               p[len-1] == ' '  || p[len-1] == '\t'))
++                p[--len] = '\0';
++        }
++
++        if (WSTRNCASECMP(p, "Host ", 5) == 0 ||
++            WSTRNCASECMP(p, "Host\t", 5) == 0) {
++            val = p + 5;
++            while (*val == ' ' || *val == '\t') val++;
++            inMatchingHost = (strcmp(val, host) == 0) ? 1 : 0;
++        }
++        else if (inMatchingHost &&
++                 (WSTRNCASECMP(p, "User ", 5) == 0 ||
++                  WSTRNCASECMP(p, "User\t", 5) == 0)) {
++            val = p + 5;
++            while (*val == ' ' || *val == '\t') val++;
++            snprintf(user, userSz, "%s", val);
++            found = 1;
++            break;
++        }
++    }
++
++    WFCLOSE(NULL, fp);
++    return found ? 0 : -1;
++#else
++    (void)configPath;
++    (void)host;
++    (void)user;
++    (void)userSz;
++    return -1;
++#endif
++}
+diff --git a/wolfssh/examples/client/common.h b/wolfssh/examples/client/common.h
+index 6ea330c2ec42bfdd6ae63681d994fe5485ca04a0..a3ce17647dec60d493855b1bd92d8130833502b5 100644
+--- a/wolfssh/examples/client/common.h
++++ b/wolfssh/examples/client/common.h
+@@ -25,6 +25,11 @@ int ClientUsePubKey(const char* pubKeyName, int userEcc, void* heap);
+ int ClientSetPrivateKey(const char* privKeyName, int userEcc,
+         void* heap, const char* tpmKeyAuth);
+ int ClientUseCert(const char* certName, void* heap);
++int ClientUseCertFromKeyFile(const char* keyFileName, void* heap);
++int ClientLookupConfigIdentity(const char* configPath, const char* host,
++        char* identityFile, int identityFileSz);
++int ClientLookupConfigUser(const char* configPath, const char* host,
++        char* user, int userSz);
+ int ClientSetEcho(int type);
+ int ClientUserAuth(byte authType,
+         WS_UserAuthData* authData, void* ctx);
+diff --git a/wolfssh/examples/scpclient/scpclient.c b/wolfssh/examples/scpclient/scpclient.c
+index 8e15aacfbcd8539ce27ce87e8a3458acecb3860a..3dd8befdbce3d8ab6649593742295b44899c2b9d 100644
+--- a/wolfssh/examples/scpclient/scpclient.c
++++ b/wolfssh/examples/scpclient/scpclient.c
+@@ -48,41 +48,82 @@
+ #include "examples/scpclient/scpclient.h"
+ #include "examples/client/common.h"
+ 
+-#define USAGE_WIDE "12"
++#ifndef USE_WINDOWS_API
++    #include <pwd.h>
++#endif
++
+ static void ShowUsage(void)
+ {
+     printf("wolfscp %s linked with wolfSSL %s\n", LIBWOLFSSH_VERSION_STRING,
+         LIBWOLFSSL_VERSION_STRING);
+-    printf(" -%c %-" USAGE_WIDE "s %s\n", 'h', "",
+-            "display this help and exit");
+-    printf(" -%c %-" USAGE_WIDE "s %s, default %s\n", 'H', "<host>",
+-            "host to connect to", wolfSshIp);
+-    printf(" -%c %-" USAGE_WIDE "s %s, default %u\n", 'p', "<num>",
+-            "port to connect on", wolfSshPort);
+-    printf(" -%c %-" USAGE_WIDE "s %s\n", 'u', "<username>",
+-            "username to authenticate as (REQUIRED)");
+-    printf(" -%c %-" USAGE_WIDE "s %s\n", 'P', "<password>",
+-            "password for username, prompted if omitted");
+-    printf(" -%c %-" USAGE_WIDE "s %s\n", 'L', "<from>:<to>",
+-            "copy from local to server");
+-    printf(" -%c %-" USAGE_WIDE "s %s\n", 'S', "<from>:<to>",
+-            "copy from server to local");
+-    printf(" -%c %-" USAGE_WIDE "s %s\n", 'i', "<filename>",
+-            "filename for the user's private key");
+-    printf(" -%c %-" USAGE_WIDE "s %s\n", 'j', "<filename>",
+-            "filename for the user's public key");
++    printf("usage: wolfscp [-P port] [-i keyfile] [-l user] "
++           "source target\n");
++    printf("       wolfscp localfile [user@]host:remotefile\n");
++    printf("       wolfscp [user@]host:remotefile localfile\n");
++    printf("\n");
++    printf("  -P <port>      port to connect on, default 22\n");
++    printf("  -i <keyfile>   identity file (private key)\n");
++    printf("  -l <user>      login name\n");
++    printf("  -p <password>  password for authentication\n");
+ #ifdef WOLFSSH_CERTS
+-    printf(" -%c %-" USAGE_WIDE "s %s\n", 'J', "<filename>",
+-            "filename for DER certificate to use");
+-    printf("     %-" USAGE_WIDE "s %s\n", "",
+-            "Certificate example : client -u orange ");
+-    printf("     %-" USAGE_WIDE "s %s\n", "",
+-            "-J orange-cert.der -i orange-key.der");
+-    printf(" -%c %-" USAGE_WIDE "s %s\n", 'A', "<filename>",
+-            "filename for DER CA certificate to verify host");
+-    printf(" -%c %-" USAGE_WIDE "s %s\n", 'X', "",
+-            "Ignore IP checks on peer vs peer certificate");
++    printf("  -J <certfile>  certificate file (DER format)\n");
++    printf("  -A <cafile>    CA certificate to verify host\n");
++    printf("  -X             ignore IP checks on peer certificate\n");
+ #endif
++    printf("  -h             display this help and exit\n");
++}
++
++
++/* Parse [user@]host:path, returns 0 on success.
++ * Sets *userOut, *hostOut, *pathOut. userOut may be NULL if no user@. */
++static int parseScpArg(const char* arg, char** userOut, char** hostOut,
++        char** pathOut)
++{
++    char* at;
++    char* colon;
++    static char userBuf[256];
++    static char hostBuf[256];
++
++    *userOut = NULL;
++    *hostOut = NULL;
++    *pathOut = NULL;
++
++    colon = strchr(arg, ':');
++#ifdef USE_WINDOWS_API
++    /* Skip Windows drive letter prefix (e.g., C:\, D:/) */
++    if (colon != NULL && colon == arg + 1 &&
++        ((arg[0] >= 'A' && arg[0] <= 'Z') || (arg[0] >= 'a' && arg[0] <= 'z'))) {
++        colon = strchr(colon + 1, ':');
++    }
++#endif
++    if (colon == NULL)
++        return -1; /* not a remote path */
++
++    at = strchr(arg, '@');
++    if (at != NULL && at < colon) {
++        int uLen = (int)(at - arg);
++        if (uLen <= 0 || uLen >= (int)sizeof(userBuf))
++            return -1;
++        memcpy(userBuf, arg, uLen);
++        userBuf[uLen] = '\0';
++        *userOut = userBuf;
++        arg = at + 1;
++    }
++
++    {
++        int hLen = (int)(colon - arg);
++        if (hLen <= 0 || hLen >= (int)sizeof(hostBuf))
++            return -1;
++        memcpy(hostBuf, arg, hLen);
++        hostBuf[hLen] = '\0';
++        *hostOut = hostBuf;
++    }
++
++    *pathOut = (char*)(colon + 1);
++    if (strlen(*pathOut) == 0)
++        return -1;
++
++    return 0;
+ }
+ 
+ 
+@@ -105,56 +146,24 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
+     char** argv = ((func_args*)args)->argv;
+     const char* username = NULL;
+     const char* password = NULL;
+-    char* host = (char*)wolfSshIp;
+-    char* path1 = NULL;
+-    char* path2 = NULL;
+-    word16 port = wolfSshPort;
++    char* host = NULL;
++    char* localPath = NULL;
++    char* remotePath = NULL;
++    word16 port = 22;
+     byte nonBlock = 0;
+     enum copyDir dir = copyNone;
+     int ch;
+-    char* pubKeyName = NULL;
+     char* privKeyName = NULL;
+     char* certName = NULL;
+     char* caCert   = NULL;
+ 
+     ((func_args*)args)->return_code = 0;
+ 
+-    while ((ch = mygetopt(argc, argv, "H:L:NP:S:hp:u:XJ:A:i:j:")) != -1) {
++    while ((ch = mygetopt(argc, argv, "P:p:i:l:J:A:XhN")) != -1) {
+         switch (ch) {
+-            case 'H':
+-                host = myoptarg;
+-                break;
+-
+-            case 'L':
+-                dir = copyToSrv;
+-                path1 = myoptarg;
+-                break;
+-
+-            case 'N':
+-                nonBlock = 1;
+-                break;
+-
+             case 'P':
+-                password = myoptarg;
+-                break;
+-
+-            case 'S':
+-                dir = copyFromSrv;
+-                path1 = myoptarg;
+-                break;
+-
+-            case 'h':
+-                ShowUsage();
+-                exit(EXIT_SUCCESS);
+-
+-            case 'u':
+-                username = myoptarg;
+-                break;
+-
+-            case 'p':
+                 if (myoptarg == NULL)
+                     err_sys("null argument found");
+-
+                 port = (word16)atoi(myoptarg);
+                 #if !defined(NO_MAIN_DRIVER) || defined(USE_WINDOWS_API)
+                     if (port == 0)
+@@ -162,12 +171,20 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
+                 #endif
+                 break;
+ 
++            case 'p':
++                password = myoptarg;
++                break;
++
+             case 'i':
+                 privKeyName = myoptarg;
+                 break;
+ 
+-            case 'j':
+-                pubKeyName = myoptarg;
++            case 'l':
++                username = myoptarg;
++                break;
++
++            case 'N':
++                nonBlock = 1;
+                 break;
+ 
+         #ifdef WOLFSSH_CERTS
+@@ -186,6 +203,10 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
+             #endif
+         #endif
+ 
++            case 'h':
++                ShowUsage();
++                exit(EXIT_SUCCESS);
++
+             default:
+                 ShowUsage();
+                 exit(MY_EX_USAGE);
+@@ -193,31 +214,109 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
+         }
+     }
+ 
+-    myoptind = 0;      /* reset for test cases */
++    /* Parse positional arguments: source target
++     * One of them must be [user@]host:path (remote), the other is local */
++    if (myoptind + 2 != argc) {
++        ShowUsage();
++        err_sys("Requires exactly two positional arguments: source and target");
++    }
+ 
+-    if (username == NULL)
+-        err_sys("client requires a username parameter.");
++    {
++        char* remoteUser = NULL;
++        char* remoteHost = NULL;
++        char* remoteFile = NULL;
++
++        /* Try first arg as remote */
++        if (parseScpArg(argv[myoptind], &remoteUser, &remoteHost,
++                    &remoteFile) == 0) {
++            dir = copyFromSrv;
++            host = remoteHost;
++            remotePath = remoteFile;
++            localPath = argv[myoptind + 1];
++            if (remoteUser != NULL && username == NULL)
++                username = remoteUser;
++        }
++        /* Try second arg as remote */
++        else if (parseScpArg(argv[myoptind + 1], &remoteUser, &remoteHost,
++                    &remoteFile) == 0) {
++            dir = copyToSrv;
++            host = remoteHost;
++            remotePath = remoteFile;
++            localPath = argv[myoptind];
++            if (remoteUser != NULL && username == NULL)
++                username = remoteUser;
++        }
++        else {
++            ShowUsage();
++            err_sys("One argument must be [user@]host:path");
++        }
++    }
+ 
+-    if (dir == copyNone)
+-        err_sys("didn't specify a copy direction");
++    myoptind = 0;      /* reset for test cases */
+ 
+-    /* split file path */
+-    if (path1 == NULL) {
+-        err_sys("Missing path value");
+-    }
++    if (host == NULL)
++        err_sys("missing remote host");
++
++    /* Resolve identity key and username from SSH config if not specified:
++     *   1. ~/.ssh/config IdentityFile/User for matching Host
++     *   2. Default: ~/.ssh/id_ecdsa */
++    if ((privKeyName == NULL || username == NULL) && host != NULL) {
++        char* env = getenv("HOME");
++#ifdef USE_WINDOWS_API
++        if (env == NULL)
++            env = getenv("USERPROFILE");
++#endif
++        if (env != NULL) {
++            char configPath[256];
++
++            snprintf(configPath, sizeof(configPath), "%s/.ssh/config", env);
++
++            /* Read username from config if not specified */
++            if (username == NULL) {
++                static char scpConfigUser[64];
++                if (ClientLookupConfigUser(configPath, host,
++                        scpConfigUser, sizeof(scpConfigUser)) == 0
++                        && scpConfigUser[0] != '\0') {
++                    username = scpConfigUser;
++                }
++            }
+ 
+-    path2 = strchr(path1, ':');
+-    if (path2 == NULL) {
+-        err_sys("Missing colon separator");
++            /* Read identity file from config if not specified */
++            if (privKeyName == NULL) {
++                static char scpIdentity[256];
++                scpIdentity[0] = '\0';
++                if (ClientLookupConfigIdentity(configPath, host,
++                        scpIdentity, sizeof(scpIdentity)) == 0
++                        && scpIdentity[0] != '\0') {
++                    privKeyName = scpIdentity;
++                }
++                else {
++                    static char scpDefaultKey[256];
++                    snprintf(scpDefaultKey, sizeof(scpDefaultKey),
++                             "%s/.ssh/id_ecdsa", env);
++                    privKeyName = scpDefaultKey;
++                }
++            }
++        }
+     }
+ 
+-    *path2 = 0;
+-    path2++;
+-
+-    if (strlen(path1) == 0 || strlen(path2) == 0) {
+-        err_sys("Empty path values");
++    /* System user fallback if no username specified */
++    if (username == NULL) {
++#ifdef USE_WINDOWS_API
++        static char sysUserBuf[256 + 1];
++        DWORD sysUserSz = sizeof(sysUserBuf);
++        if (GetUserNameA(sysUserBuf, &sysUserSz))
++            username = sysUserBuf;
++#else
++        struct passwd* pw = getpwuid(getuid());
++        if (pw != NULL && pw->pw_name != NULL)
++            username = pw->pw_name;
++#endif
+     }
+ 
++    if (username == NULL)
++        err_sys("client requires a username (-l user or user@host:path)");
++
+     ret = ClientSetPrivateKey(privKeyName, 0, NULL, NULL);
+     if (ret != 0) {
+         err_sys("Error setting private key");
+@@ -228,10 +327,14 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
+     if (certName) {
+         ret = ClientUseCert(certName, NULL);
+     }
++    else if (ClientUseCertFromKeyFile(privKeyName, NULL) == 0) {
++        /* Auto-detected certificate in composite PEM key file */
++        certName = privKeyName;
++    }
+     else
+ #endif
+     {
+-        ret = ClientUsePubKey(pubKeyName, 0, NULL);
++        ret = ClientUsePubKey(NULL, 0, NULL);
+     }
+     if (ret != 0) {
+         err_sys("Error setting public key");
+@@ -259,11 +362,26 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
+     if (ssh == NULL)
+         err_sys("Couldn't create wolfSSH session.");
+ 
++#ifdef WOLFSSH_CERTS
++    if (certName != NULL) {
++        wolfSSH_SetAlgoListKey(ssh,
++            "x509v3-ecdsa-sha2-nistp256,"
++            "x509v3-ecdsa-sha2-nistp384,"
++            "x509v3-ecdsa-sha2-nistp521,"
++            "x509v3-ssh-rsa,"
++            "ecdsa-sha2-nistp256,"
++            "rsa-sha2-256,"
++            "ssh-rsa");
++    }
++#endif
++
+     wolfSSH_SetPublicKeyCheckCtx(ssh, (void*)host);
+ 
+     if (password != NULL)
+         wolfSSH_SetUserAuthCtx(ssh, (void*)password);
+ 
++    WSTARTTCP();
++
+     ret = wolfSSH_SetUsername(ssh, username);
+     if (ret != WS_SUCCESS)
+         err_sys("Couldn't set the username.");
+@@ -274,12 +392,12 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
+         printf("IPV6 address\n");
+         build_addr_ipv6(&clientAddr6, host, port);
+         sockFd = socket(AF_INET6, SOCK_STREAM, 0);
+-        ret = connect(sockFd, (const struct sockaddr *)&clientAddr6, clientAddrSz6);
++        ret = connect(sockFd, (const struct sockaddr *)&clientAddr6,
++                      clientAddrSz6);
+     }
+     else
+ #endif
+     {
+-        printf("IPV4 address\n");
+         build_addr(&clientAddr, host, port);
+         tcp_socket(&sockFd, ((struct sockaddr_in *)&clientAddr)->sin_family);
+         ret = connect(sockFd, (const struct sockaddr *)&clientAddr,
+@@ -301,16 +419,19 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
+ 
+     do {
+         if (dir == copyFromSrv)
+-            ret = wolfSSH_SCP_from(ssh, path1, path2);
++            ret = wolfSSH_SCP_from(ssh, remotePath, localPath);
+         else if (dir == copyToSrv)
+-            ret = wolfSSH_SCP_to(ssh, path1, path2);
++            ret = wolfSSH_SCP_to(ssh, localPath, remotePath);
+         if (ret != WS_SUCCESS && ret == WS_FATAL_ERROR) {
+             ret = wolfSSH_get_error(ssh);
+         }
+     } while (ret == WS_WANT_READ || ret == WS_WANT_WRITE ||
+                     ret == WS_CHAN_RXD || ret == WS_REKEYING);
+     if (ret != WS_SUCCESS) {
+-        fprintf(stderr, "Couldn't copy the file.");
++        int sshErr = wolfSSH_get_error(ssh);
++        const char* errName = wolfSSH_get_error_name(ssh);
++        fprintf(stderr, "Couldn't copy the file. ret=%d, sshErr=%d (%s)\n",
++                ret, sshErr, errName ? errName : "null");
+         ((func_args*)args)->return_code = 1;
+     }
+ 
+@@ -339,7 +460,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
+         "Closing scp stream failed. Connection could have been closed by peer");
+     }
+ 
+-    ClientFreeBuffers(pubKeyName, privKeyName, NULL);
++    ClientFreeBuffers(NULL, privKeyName, NULL);
+ #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+     wc_ecc_fp_free();  /* free per thread cache */
+ #endif
+diff --git a/wolfssh/examples/sftpclient/sftpclient.c b/wolfssh/examples/sftpclient/sftpclient.c
+index 576f1c894503625550b68ee060c2b44688dc63de..2614de2fe8521ee50dee848c70e824d95406df11 100644
+--- a/wolfssh/examples/sftpclient/sftpclient.c
++++ b/wolfssh/examples/sftpclient/sftpclient.c
+@@ -39,6 +39,10 @@
+ #include <wolfssl/wolfcrypt/coding.h>
+ #include "examples/sftpclient/sftpclient.h"
+ #include "examples/client/common.h"
++
++#ifndef USE_WINDOWS_API
++    #include <pwd.h>
++#endif
+ #if !defined(USE_WINDOWS_API) && !defined(MICROCHIP_PIC32) && \
+     !defined(WOLFSSH_ZEPHYR)
+     #include <termios.h>
+@@ -376,27 +380,24 @@ static void ShowUsage(void)
+ {
+     printf("wolfsftp %s linked with wolfSSL %s\n", LIBWOLFSSH_VERSION_STRING,
+         LIBWOLFSSL_VERSION_STRING);
+-    printf(" -?            display this help and exit\n");
+-    printf(" -h <host>     host to connect to, default %s\n", wolfSshIp);
+-    printf(" -p <num>      port to connect on, default %d\n", wolfSshPort);
+-    printf(" -u <username> username to authenticate as (REQUIRED)\n");
+-    printf(" -P <password> password for username, prompted if omitted\n");
+-    printf(" -d <path>     set the default local path\n");
+-    printf(" -N            use non blocking sockets\n");
+-    printf(" -e            use ECC user authentication\n");
+-    /*printf(" -E            use ECC server authentication\n");*/
+-    printf(" -l <filename> local filename\n");
+-    printf(" -r <filename> remote filename\n");
+-    printf(" -g            put local filename as remote filename\n");
+-    printf(" -G            get remote filename as local filename\n");
+-    printf(" -i <filename> filename for the user's private key\n");
++    printf("usage: wolfsftp [-P port] [-i keyfile] [-l user] [user@]host\n");
++    printf("       wolfsftp [-P port] [-i keyfile] "
++           "localfile [user@]host:remotefile\n");
++    printf("       wolfsftp [-P port] [-i keyfile] "
++           "[user@]host:remotefile localfile\n");
++    printf("\n");
++    printf("  -P <port>      port to connect on, default 22\n");
++    printf("  -i <keyfile>   identity file (private key)\n");
++    printf("  -l <user>      login name\n");
++    printf("  -p <password>  password for authentication\n");
++    printf("  -d <path>      set the default local path\n");
++    printf("  -N             use non blocking sockets\n");
+ #ifdef WOLFSSH_CERTS
+-    printf(" -J <filename> filename for DER certificate to use\n");
+-    printf("               Certificate example : client -u orange \\\n");
+-    printf("               -J orange-cert.der -i orange-key.der\n");
+-    printf(" -A <filename> filename for DER CA certificate to verify host\n");
+-    printf(" -X            Ignore IP checks on peer vs peer certificate\n");
++    printf("  -J <certfile>  certificate file (DER format)\n");
++    printf("  -A <cafile>    CA certificate to verify host\n");
++    printf("  -X             ignore IP checks on peer certificate\n");
+ #endif
++    printf("  -h             display this help and exit\n");
+ 
+     ShowCommands();
+ }
+@@ -1373,10 +1374,8 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
+     socklen_t clientAddrSz = sizeof(clientAddr);
+     int ret;
+     int ch;
+-    int userEcc = 0;
+-    /* int peerEcc = 0; */
+-    word16 port = wolfSshPort;
+-    char* host = (char*)wolfSshIp;
++    word16 port = 22;
++    char* host = NULL;
+     const char* username = NULL;
+     const char* password = NULL;
+     const char* defaultSftpPath = NULL;
+@@ -1385,7 +1384,6 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
+     int autopilot = AUTOPILOT_OFF;
+     char* apLocal = NULL;
+     char* apRemote = NULL;
+-    char* pubKeyName = NULL;
+     char* certName = NULL;
+     char* caCert   = NULL;
+     SFTPC_HEAP_HINT* heap = NULL;
+@@ -1394,23 +1392,9 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
+     char**  argv = ((func_args*)args)->argv;
+     ((func_args*)args)->return_code = 0;
+ 
+-    while ((ch = mygetopt(argc, argv, "?d:gh:i:j:l:p:r:u:EGNP:J:A:X")) != -1) {
++    while ((ch = mygetopt(argc, argv, "P:p:i:l:d:NJ:A:Xh?")) != -1) {
+         switch (ch) {
+-            case 'd':
+-                defaultSftpPath = myoptarg;
+-                break;
+-
+-            case 'E':
+-                /* peerEcc = 1; */
+-                err_sys("wolfSFTP ECC server authentication "
+-                        "not yet supported.");
+-                break;
+-
+-            case 'h':
+-                host = myoptarg;
+-                break;
+-
+-            case 'p':
++            case 'P':
+                 if (myoptarg == NULL)
+                     err_sys("null argument found");
+                 port = (word16)atoi(myoptarg);
+@@ -1420,42 +1404,26 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
+                 #endif
+                 break;
+ 
+-            case 'u':
+-                username = myoptarg;
+-                break;
+-
+-            case 'l':
+-                apLocal = myoptarg;
+-                break;
+-
+-            case 'r':
+-                apRemote = myoptarg;
++            case 'p':
++                password = myoptarg;
+                 break;
+ 
+-            case 'g':
+-                autopilot = AUTOPILOT_PUT;
++            case 'i':
++                privKeyName = myoptarg;
+                 break;
+ 
+-            case 'G':
+-                autopilot = AUTOPILOT_GET;
++            case 'l':
++                username = myoptarg;
+                 break;
+ 
+-            case 'P':
+-                password = myoptarg;
++            case 'd':
++                defaultSftpPath = myoptarg;
+                 break;
+ 
+             case 'N':
+                 nonBlock = 1;
+                 break;
+ 
+-            case 'i':
+-                privKeyName = myoptarg;
+-                break;
+-
+-            case 'j':
+-                pubKeyName = myoptarg;
+-                break;
+-
+         #ifdef WOLFSSH_CERTS
+             case 'J':
+                 certName = myoptarg;
+@@ -1472,6 +1440,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
+             #endif
+         #endif
+ 
++            case 'h':
+             case '?':
+                 ShowUsage();
+                 exit(EXIT_SUCCESS);
+@@ -1481,27 +1450,214 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
+                 exit(MY_EX_USAGE);
+         }
+     }
+-    myoptind = 0;      /* reset for test cases */
+ 
+-    if (username == NULL)
+-        err_sys("client requires a username parameter.");
++    /* Parse positional arguments:
++     *   wolfsftp [user@]host                          (interactive)
++     *   wolfsftp [user@]host:remote local             (get)
++     *   wolfsftp local [user@]host:remote             (put)
++     */
++    {
++        int remaining = argc - myoptind;
++
++        if (remaining == 1) {
++            /* Interactive mode: [user@]host */
++            const char* target = argv[myoptind];
++            char* at = strchr(target, '@');
++
++            if (at != NULL) {
++                static char sftpUserBuf[256];
++                static char sftpHostBuf[256];
++                int uLen = (int)(at - target);
++                int hLen = (int)strlen(at + 1);
++
++                if (uLen > 0 && uLen < (int)sizeof(sftpUserBuf)) {
++                    memcpy(sftpUserBuf, target, uLen);
++                    sftpUserBuf[uLen] = '\0';
++                    if (username == NULL)
++                        username = sftpUserBuf;
++                }
++                if (hLen > 0 && hLen < (int)sizeof(sftpHostBuf)) {
++                    memcpy(sftpHostBuf, at + 1, hLen);
++                    sftpHostBuf[hLen] = '\0';
++                    host = sftpHostBuf;
++                }
++            }
++            else {
++                host = (char*)target;
++            }
++        }
++        else if (remaining == 2) {
++            /* Non-interactive file transfer:
++             * arg1=remote arg2=local  → get
++             * arg1=local  arg2=remote → put */
++            char* colon1 = strchr(argv[myoptind], ':');
++            char* colon2 = strchr(argv[myoptind + 1], ':');
++
++#ifdef USE_WINDOWS_API
++            /* Skip Windows drive letter prefix (e.g., C:\, D:/) */
++            if (colon1 != NULL && colon1 == argv[myoptind] + 1 &&
++                ((argv[myoptind][0] >= 'A' && argv[myoptind][0] <= 'Z') ||
++                 (argv[myoptind][0] >= 'a' && argv[myoptind][0] <= 'z'))) {
++                colon1 = NULL; /* local path with drive letter, not remote */
++            }
++            if (colon2 != NULL && colon2 == argv[myoptind + 1] + 1 &&
++                ((argv[myoptind + 1][0] >= 'A' && argv[myoptind + 1][0] <= 'Z') ||
++                 (argv[myoptind + 1][0] >= 'a' && argv[myoptind + 1][0] <= 'z'))) {
++                colon2 = NULL; /* local path with drive letter, not remote */
++            }
++#endif
+ 
+-    if ((pubKeyName == NULL && certName == NULL) && privKeyName != NULL) {
+-        err_sys("If setting priv key, need pub key.");
++            if (colon1 != NULL && colon2 == NULL) {
++                /* first arg is remote (get) */
++                const char* remoteArg = argv[myoptind];
++                char* at = strchr(remoteArg, '@');
++
++                autopilot = AUTOPILOT_GET;
++                apLocal = argv[myoptind + 1];
++
++                if (at != NULL && at < colon1) {
++                    static char sftpUserBuf2[256];
++                    static char sftpHostBuf2[256];
++                    int uLen = (int)(at - remoteArg);
++                    int hLen = (int)(colon1 - (at + 1));
++
++                    if (uLen > 0 && uLen < (int)sizeof(sftpUserBuf2)) {
++                        memcpy(sftpUserBuf2, remoteArg, uLen);
++                        sftpUserBuf2[uLen] = '\0';
++                        if (username == NULL)
++                            username = sftpUserBuf2;
++                    }
++                    if (hLen > 0 && hLen < (int)sizeof(sftpHostBuf2)) {
++                        memcpy(sftpHostBuf2, at + 1, hLen);
++                        sftpHostBuf2[hLen] = '\0';
++                        host = sftpHostBuf2;
++                    }
++                }
++                else {
++                    static char sftpHostBuf3[256];
++                    int hLen = (int)(colon1 - remoteArg);
++                    if (hLen > 0 && hLen < (int)sizeof(sftpHostBuf3)) {
++                        memcpy(sftpHostBuf3, remoteArg, hLen);
++                        sftpHostBuf3[hLen] = '\0';
++                        host = sftpHostBuf3;
++                    }
++                }
++                apRemote = colon1 + 1;
++            }
++            else if (colon2 != NULL && colon1 == NULL) {
++                /* second arg is remote (put) */
++                const char* remoteArg = argv[myoptind + 1];
++                char* at = strchr(remoteArg, '@');
++
++                autopilot = AUTOPILOT_PUT;
++                apLocal = argv[myoptind];
++
++                if (at != NULL && at < colon2) {
++                    static char sftpUserBuf4[256];
++                    static char sftpHostBuf4[256];
++                    int uLen = (int)(at - remoteArg);
++                    int hLen = (int)(colon2 - (at + 1));
++
++                    if (uLen > 0 && uLen < (int)sizeof(sftpUserBuf4)) {
++                        memcpy(sftpUserBuf4, remoteArg, uLen);
++                        sftpUserBuf4[uLen] = '\0';
++                        if (username == NULL)
++                            username = sftpUserBuf4;
++                    }
++                    if (hLen > 0 && hLen < (int)sizeof(sftpHostBuf4)) {
++                        memcpy(sftpHostBuf4, at + 1, hLen);
++                        sftpHostBuf4[hLen] = '\0';
++                        host = sftpHostBuf4;
++                    }
++                }
++                else {
++                    static char sftpHostBuf5[256];
++                    int hLen = (int)(colon2 - remoteArg);
++                    if (hLen > 0 && hLen < (int)sizeof(sftpHostBuf5)) {
++                        memcpy(sftpHostBuf5, remoteArg, hLen);
++                        sftpHostBuf5[hLen] = '\0';
++                        host = sftpHostBuf5;
++                    }
++                }
++                apRemote = colon2 + 1;
++            }
++            else {
++                ShowUsage();
++                err_sys("For file transfer, one argument must be "
++                        "[user@]host:path");
++            }
++        }
++        else {
++            ShowUsage();
++            err_sys("Expected [user@]host or source/target arguments");
++        }
+     }
+ 
++    myoptind = 0;      /* reset for test cases */
++
++    if (host == NULL)
++        err_sys("missing remote host");
+ 
+-#ifdef WOLFSSH_NO_RSA
+-    userEcc = 1;
+-    /* peerEcc = 1; */
++    /* Resolve identity key and username from SSH config if not specified:
++     *   1. ~/.ssh/config IdentityFile/User for matching Host
++     *   2. Default: ~/.ssh/id_ecdsa */
++    if ((privKeyName == NULL || username == NULL) && host != NULL) {
++        char* env = getenv("HOME");
++#ifdef USE_WINDOWS_API
++        if (env == NULL)
++            env = getenv("USERPROFILE");
+ #endif
++        if (env != NULL) {
++            char configPath[256];
++
++            snprintf(configPath, sizeof(configPath), "%s/.ssh/config", env);
++
++            /* Read username from config if not specified */
++            if (username == NULL) {
++                static char sftpConfigUser[64];
++                if (ClientLookupConfigUser(configPath, host,
++                        sftpConfigUser, sizeof(sftpConfigUser)) == 0
++                        && sftpConfigUser[0] != '\0') {
++                    username = sftpConfigUser;
++                }
++            }
+ 
+-    if (autopilot != AUTOPILOT_OFF) {
+-        if (apLocal == NULL || apRemote == NULL) {
+-            err_sys("Options -G and -g require both -l and -r.");
++            /* Read identity file from config if not specified */
++            if (privKeyName == NULL) {
++                static char sftpIdentity[256];
++                sftpIdentity[0] = '\0';
++                if (ClientLookupConfigIdentity(configPath, host,
++                        sftpIdentity, sizeof(sftpIdentity)) == 0
++                        && sftpIdentity[0] != '\0') {
++                    privKeyName = sftpIdentity;
++                }
++                else {
++                    static char sftpDefaultKey[256];
++                    snprintf(sftpDefaultKey, sizeof(sftpDefaultKey),
++                             "%s/.ssh/id_ecdsa", env);
++                    privKeyName = sftpDefaultKey;
++                }
++            }
+         }
+     }
+ 
++    /* System user fallback if no username specified */
++    if (username == NULL) {
++#ifdef USE_WINDOWS_API
++        static char sysUserBuf[256 + 1];
++        DWORD sysUserSz = sizeof(sysUserBuf);
++        if (GetUserNameA(sysUserBuf, &sysUserSz))
++            username = sysUserBuf;
++#else
++        struct passwd* pw = getpwuid(getuid());
++        if (pw != NULL && pw->pw_name != NULL)
++            username = pw->pw_name;
++#endif
++    }
++
++    if (username == NULL)
++        err_sys("client requires a username (-l user or user@host)");
++
+ #ifdef WOLFSSH_TEST_BLOCK
+     if (!nonBlock) {
+         err_sys("Use -N when testing forced non blocking");
+@@ -1518,7 +1674,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
+     }
+ #endif /* WOLFSSH_STATIC_MEMORY */
+ 
+-    ret = ClientSetPrivateKey(privKeyName, userEcc, heap, NULL);
++    ret = ClientSetPrivateKey(privKeyName, 0, heap, NULL);
+     if (ret != 0) {
+         err_sys("Error setting private key");
+     }
+@@ -1528,10 +1684,14 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
+     if (certName) {
+         ret = ClientUseCert(certName, heap);
+     }
++    else if (ClientUseCertFromKeyFile(privKeyName, heap) == 0) {
++        /* Auto-detected certificate in composite PEM key file */
++        certName = privKeyName;
++    }
+     else
+ #endif
+     {
+-        ret = ClientUsePubKey(pubKeyName, 0, heap);
++        ret = ClientUsePubKey(NULL, 0, heap);
+     }
+     if (ret != 0) {
+         err_sys("Error setting public key");
+@@ -1563,6 +1723,19 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
+     if (ssh == NULL)
+         err_sys("Couldn't create wolfSSH session.");
+ 
++#ifdef WOLFSSH_CERTS
++    if (certName != NULL) {
++        wolfSSH_SetAlgoListKey(ssh,
++            "x509v3-ecdsa-sha2-nistp256,"
++            "x509v3-ecdsa-sha2-nistp384,"
++            "x509v3-ecdsa-sha2-nistp521,"
++            "x509v3-ssh-rsa,"
++            "ecdsa-sha2-nistp256,"
++            "rsa-sha2-256,"
++            "ssh-rsa");
++    }
++#endif
++
+     if (defaultSftpPath != NULL) {
+         if (wolfSSH_SFTP_SetDefaultPath(ssh, defaultSftpPath)
+                 != WS_SUCCESS) {
+@@ -1689,7 +1862,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
+         ((func_args*)args)->return_code = ret;
+     }
+ 
+-    ClientFreeBuffers(pubKeyName, privKeyName, heap);
++    ClientFreeBuffers(NULL, privKeyName, heap);
+ #if !defined(WOLFSSH_NO_ECC) && defined(FP_ECC) && defined(HAVE_THREAD_LS)
+     wc_ecc_fp_free();  /* free per thread cache */
+ #endif
+@@ -1744,7 +1917,6 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
+ 
+         wolfSSH_Init();
+ 
+-        ChangeToWolfSshRoot();
+         sftpclient_test(&args);
+ 
+         wolfSSH_Cleanup();
+diff --git a/wolfssh/src/internal.c b/wolfssh/src/internal.c
+index 89ad59c01d98fced94e09e19b6cf03a662a96984..2cc6dd2fde5128e0a0ac2e687ef60b380e705ecf 100644
+--- a/wolfssh/src/internal.c
++++ b/wolfssh/src/internal.c
+@@ -2837,6 +2837,10 @@ static const NameIdPair NameIdMap[] = {
+ #ifdef WOLFSSH_FWD
+     { ID_CHANTYPE_TCPIP_FORWARD, TYPE_OTHER, "forwarded-tcpip" },
+     { ID_CHANTYPE_TCPIP_DIRECT, TYPE_OTHER, "direct-tcpip" },
++    { ID_CHANTYPE_STREAMLOCAL_DIRECT, TYPE_OTHER,
++            "direct-streamlocal@openssh.com" },
++    { ID_CHANTYPE_STREAMLOCAL_FORWARD, TYPE_OTHER,
++            "forwarded-streamlocal@openssh.com" },
+ #endif /* WOLFSSH_FWD */
+ #ifdef WOLFSSH_AGENT
+     { ID_CHANTYPE_AUTH_AGENT, TYPE_OTHER, "auth-agent@openssh.com" },
+@@ -2983,6 +2987,8 @@ void ChannelDelete(WOLFSSH_CHANNEL* channel, void* heap)
+             WFREE(channel->host, heap, DYNTYPE_STRING);
+         if (channel->origin)
+             WFREE(channel->origin, heap, DYNTYPE_STRING);
++        if (channel->socketPath)
++            WFREE(channel->socketPath, heap, DYNTYPE_STRING);
+     #endif /* WOLFSSH_FWD */
+         WFREE(channel->inputBuffer.buffer,
+               channel->inputBuffer.heap, DYNTYPE_BUFFER);
+@@ -3091,6 +3097,61 @@ int ChannelUpdateForward(WOLFSSH_CHANNEL* channel,
+ 
+     return ret;
+ }
++
++
++int ChannelUpdateStreamLocal(WOLFSSH_CHANNEL* channel,
++                                const char* socketPath,
++                                int isDirect)
++{
++    void* heap = NULL;
++    int ret = WS_SUCCESS;
++    char* pathCopy = NULL;
++    word32 pathSz;
++
++    WOLFSSH_UNUSED(heap);
++
++    if (channel == NULL || socketPath == NULL)
++        ret = WS_BAD_ARGUMENT;
++    else {
++        heap = channel->ssh->ctx->heap;
++        pathSz = (word32)WSTRLEN(socketPath) + 1;
++        pathCopy = (char*)WMALLOC(pathSz, heap, DYNTYPE_STRING);
++        if (pathCopy == NULL)
++            ret = WS_MEMORY_E;
++    }
++
++    if (ret == WS_SUCCESS) {
++        WSTRNCPY(pathCopy, socketPath, pathSz);
++
++        if (channel->socketPath)
++            WFREE(channel->socketPath, heap, DYNTYPE_STRING);
++
++        channel->socketPath = pathCopy;
++        channel->isDirect = isDirect;
++        channel->isStreamLocal = 1;
++
++        /* For streamlocal, set host to socketPath for logging,
++         * and origin/originPort to empty/0 per protocol */
++        if (channel->host == NULL) {
++            char* hostCopy = (char*)WMALLOC(pathSz, heap, DYNTYPE_STRING);
++            if (hostCopy != NULL) {
++                WSTRNCPY(hostCopy, socketPath, pathSz);
++                channel->host = hostCopy;
++            }
++        }
++        channel->hostPort = 0;
++        if (channel->origin == NULL) {
++            char* originCopy = (char*)WMALLOC(1, heap, DYNTYPE_STRING);
++            if (originCopy != NULL) {
++                originCopy[0] = '\0';
++                channel->origin = originCopy;
++            }
++        }
++        channel->originPort = 0;
++    }
++
++    return ret;
++}
+ #endif /* WOLFSSH_FWD */
+ 
+ 
+@@ -8470,6 +8531,7 @@ static int DoUserAuthFailure(WOLFSSH* ssh,
+     }
+ 
+     if (ret == WS_SUCCESS) {
++        ssh->userAuthPkDone = 0;
+         ret = SendUserAuthRequest(ssh, authType, 0);
+     }
+ 
+@@ -8880,6 +8942,14 @@ static int DoChannelOpen(WOLFSSH* ssh,
+                                 &host, &hostPort, &origin, &originPort,
+                                 buf, len, &begin);
+                 break;
++            case ID_CHANTYPE_STREAMLOCAL_DIRECT:
++                isDirect = 1;
++                FALL_THROUGH;
++            case ID_CHANTYPE_STREAMLOCAL_FORWARD:
++                ret = DoChannelOpenForward(ssh,
++                                &host, &hostPort, &origin, &originPort,
++                                buf, len, &begin);
++                break;
+         #endif /* WOLFSSH_FWD */
+         #ifdef WOLFSSH_AGENT
+             case ID_CHANTYPE_AUTH_AGENT:
+@@ -8933,6 +9003,26 @@ static int DoChannelOpen(WOLFSSH* ssh,
+                     ret = WS_ERROR;
+                 }
+             }
++            else if (typeId == ID_CHANTYPE_STREAMLOCAL_DIRECT) {
++                ChannelUpdateForward(newChannel,
++                        host, hostPort, origin, originPort, isDirect);
++                newChannel->isStreamLocal = 1;
++
++                if (ssh->ctx->fwdCb) {
++                    ret = ssh->ctx->fwdCb(WOLFSSH_FWD_STREAMLOCAL_SETUP,
++                            ssh->fwdCbCtx, host, 0);
++                    if (ret == WS_SUCCESS) {
++                        ret = ssh->ctx->fwdCb(WOLFSSH_FWD_CHANNEL_ID,
++                                ssh->fwdCbCtx, NULL, newChannel->channel);
++                    }
++                }
++                else {
++                    WLOG(WS_LOG_WARN, "No forward callback set for "
++                            "direct-streamlocal channel, failing channel open");
++                    fail_reason = OPEN_ADMINISTRATIVELY_PROHIBITED;
++                    ret = WS_ERROR;
++                }
++            }
+         #endif /* WOLFSSH_FWD */
+             if (ret == WS_SUCCESS) {
+                 ret = ChannelAppend(ssh, newChannel);
+@@ -11246,9 +11336,69 @@ struct wolfSSH_sigKeyBlockFull {
+ #define KEX_SIG_SIZE (512)
+ 
+ #ifdef WOLFSSH_CERTS
++/* Count individual DER certificates in a concatenated buffer.
++ * Returns the number of DER certificates found, and optionally
++ * stores the total encoded size (sum of LENGTH_SZ + certSz for each cert).
++ */
++static word32 CountDerCerts(const byte* buf, word32 bufSz,
++        word32* totalEncodedSz)
++{
++    word32 count = 0;
++    word32 offset = 0;
++    word32 encodedSz = 0;
++
++    while (offset < bufSz) {
++        word32 seqLen;
++        word32 headerLen;
++        word32 totalCertLen;
++
++        if (buf[offset] != 0x30) break; /* Not a SEQUENCE tag */
++        if (offset + 1 >= bufSz) break;
++
++        if (buf[offset + 1] < 0x80) {
++            seqLen = buf[offset + 1];
++            headerLen = 2;
++        }
++        else if (buf[offset + 1] == 0x81) {
++            if (offset + 2 >= bufSz) break;
++            seqLen = buf[offset + 2];
++            headerLen = 3;
++        }
++        else if (buf[offset + 1] == 0x82) {
++            if (offset + 3 >= bufSz) break;
++            seqLen = ((word32)buf[offset + 2] << 8) | buf[offset + 3];
++            headerLen = 4;
++        }
++        else if (buf[offset + 1] == 0x83) {
++            if (offset + 4 >= bufSz) break;
++            seqLen = ((word32)buf[offset + 2] << 16) |
++                     ((word32)buf[offset + 3] << 8) |
++                     buf[offset + 4];
++            headerLen = 5;
++        }
++        else {
++            break; /* Unsupported length encoding */
++        }
++
++        totalCertLen = headerLen + seqLen;
++        if (offset + totalCertLen > bufSz) break;
++
++        encodedSz += LENGTH_SZ + totalCertLen;
++        count++;
++        offset += totalCertLen;
++    }
++
++    if (totalEncodedSz != NULL)
++        *totalEncodedSz = encodedSz;
++
++    return count;
++}
++
++
+ /* places RFC6187 style cert + ocsp into output buffer and advances idx
+  * [size of string] [string] [cert count] [cert size] [cert] [...]
+  *                            [ocsp count] [ocsp size] [ocsp] [...]
++ * Supports multiple DER certificates concatenated in the cert buffer.
+  * returns WS_SUCCESS on success
+  * returns LENGTH_ONLY_E if output is null, and updates outputSz with required
+  *      output buffer size
+@@ -11262,6 +11412,8 @@ static int BuildRFC6187Info(WOLFSSH* ssh, int pubKeyID,
+     word32 localIdx;
+     const byte* publicKeyType;
+     word32 publicKeyTypeSz;
++    word32 certCount;
++    word32 certsEncodedSz;
+ 
+     localIdx = *idx;
+     switch (pubKeyID) {
+@@ -11294,10 +11446,23 @@ static int BuildRFC6187Info(WOLFSSH* ssh, int pubKeyID,
+     }
+     publicKeyTypeSz = (word32)WSTRLEN((const char*)publicKeyType);
+ 
+-    /* length of entire bundle of info */
++    /* Count individual DER certificates in the buffer */
++    certCount = CountDerCerts(cert, certSz, &certsEncodedSz);
++    if (certCount == 0) {
++        /* Fallback: treat entire buffer as a single certificate */
++        certCount = 1;
++        certsEncodedSz = LENGTH_SZ + certSz;
++    }
++    WLOG(WS_LOG_DEBUG, "BuildRFC6187Info: certSz=%u certCount=%u encodedSz=%u",
++            certSz, certCount, certsEncodedSz);
++
++    /* length of entire bundle of info:
++     * [type_name_sz][type_name][cert_count]
++     * [cert1_sz][cert1][cert2_sz][cert2]...[ocsp_count]
++     */
+     if (output) {
+-        c32toa((LENGTH_SZ * 2) + (UINT32_SZ * 2) +
+-            publicKeyTypeSz + certSz, output + localIdx);
++        c32toa(LENGTH_SZ + publicKeyTypeSz + UINT32_SZ +
++            certsEncodedSz + UINT32_SZ, output + localIdx);
+     }
+     localIdx += LENGTH_SZ;
+ 
+@@ -11309,18 +11474,63 @@ static int BuildRFC6187Info(WOLFSSH* ssh, int pubKeyID,
+         WMEMCPY(output + localIdx, publicKeyType, publicKeyTypeSz);
+     localIdx += publicKeyTypeSz;
+ 
+-    /* add cert count (hard set to 1 cert for now @TODO) */
++    /* add cert count */
+     if (output)
+-        c32toa(1, output + localIdx);
++        c32toa(certCount, output + localIdx);
+     localIdx += UINT32_SZ;
+ 
+-    /* add in certificates, note this could later be multiple [certsz][cert] */
+-    if (output)
+-        c32toa(certSz, output + localIdx);
+-    localIdx += LENGTH_SZ;
+-    if (output)
+-        WMEMCPY(output + localIdx, cert, certSz);
+-    localIdx += certSz;
++    /* add in certificates - each with [certSz][cert] */
++    if (certCount > 1) {
++        word32 offset = 0;
++        while (offset < certSz) {
++            word32 seqLen;
++            word32 headerLen;
++            word32 totalCertLen;
++
++            if (cert[offset] != 0x30) break;
++            if (cert[offset + 1] < 0x80) {
++                seqLen = cert[offset + 1];
++                headerLen = 2;
++            }
++            else if (cert[offset + 1] == 0x81) {
++                seqLen = cert[offset + 2];
++                headerLen = 3;
++            }
++            else if (cert[offset + 1] == 0x82) {
++                seqLen = ((word32)cert[offset + 2] << 8) | cert[offset + 3];
++                headerLen = 4;
++            }
++            else if (cert[offset + 1] == 0x83) {
++                seqLen = ((word32)cert[offset + 2] << 16) |
++                         ((word32)cert[offset + 3] << 8) |
++                         cert[offset + 4];
++                headerLen = 5;
++            }
++            else {
++                break;
++            }
++
++            totalCertLen = headerLen + seqLen;
++            if (offset + totalCertLen > certSz) break;
++
++            if (output)
++                c32toa(totalCertLen, output + localIdx);
++            localIdx += LENGTH_SZ;
++            if (output)
++                WMEMCPY(output + localIdx, cert + offset, totalCertLen);
++            localIdx += totalCertLen;
++            offset += totalCertLen;
++        }
++    }
++    else {
++        /* Single cert - backward compatible path */
++        if (output)
++            c32toa(certSz, output + localIdx);
++        localIdx += LENGTH_SZ;
++        if (output)
++            WMEMCPY(output + localIdx, cert, certSz);
++        localIdx += certSz;
++    }
+ 
+     /* add in ocsp count hard set to 0 */
+     if (output)
+@@ -14555,6 +14765,7 @@ static int PrepareUserAuthRequestRsaCert(WOLFSSH* ssh, word32* payloadSz,
+         const WS_UserAuthData* authData, WS_KeySignature* keySig)
+ {
+     int ret = WS_SUCCESS;
++    word32 certCount;
+ 
+     WLOG(WS_LOG_DEBUG, "Entering PrepareUserAuthRequestRsaCert()");
+     if (ssh == NULL || payloadSz == NULL || authData == NULL || keySig == NULL)
+@@ -14578,8 +14789,15 @@ static int PrepareUserAuthRequestRsaCert(WOLFSSH* ssh, word32* payloadSz,
+     }
+ 
+     if (ret == WS_SUCCESS) {
++        /* Account for cert chain: each additional cert needs a LENGTH_SZ */
++        certCount = CountDerCerts(authData->sf.publicKey.publicKey,
++                authData->sf.publicKey.publicKeySz, NULL);
++        if (certCount <= 1)
++            certCount = 1;
++
+         *payloadSz += (LENGTH_SZ + authData->sf.publicKey.publicKeyTypeSz) +
+-                (UINT32_SZ * 2); /* certificate and ocsp counts */
++                (UINT32_SZ * 2) + /* certificate and ocsp counts */
++                (certCount - 1) * LENGTH_SZ; /* extra cert size headers */
+ 
+         if (authData->sf.publicKey.hasSignature) {
+             int sigSz = wc_RsaEncryptSize(&keySig->ks.rsa.key);
+@@ -15011,6 +15229,7 @@ static int PrepareUserAuthRequestEccCert(WOLFSSH* ssh, word32* payloadSz,
+         const WS_UserAuthData* authData, WS_KeySignature* keySig)
+ {
+     int ret = WS_SUCCESS;
++    word32 certCount;
+ 
+     WLOG(WS_LOG_DEBUG, "Entering PrepareUserAuthRequestEccCert()");
+     if (ssh == NULL || payloadSz == NULL || authData == NULL || keySig == NULL)
+@@ -15047,8 +15266,15 @@ static int PrepareUserAuthRequestEccCert(WOLFSSH* ssh, word32* payloadSz,
+     }
+ 
+     if (ret == WS_SUCCESS) {
++        /* Account for cert chain: each additional cert needs a LENGTH_SZ */
++        certCount = CountDerCerts(authData->sf.publicKey.publicKey,
++                authData->sf.publicKey.publicKeySz, NULL);
++        if (certCount <= 1)
++            certCount = 1;
++
+         *payloadSz += (LENGTH_SZ + authData->sf.publicKey.publicKeyTypeSz) +
+-                (UINT32_SZ * 2); /* certificate and ocsp counts */
++                (UINT32_SZ * 2) + /* certificate and ocsp counts */
++                (certCount - 1) * LENGTH_SZ; /* extra cert size headers */
+ 
+         if (authData->sf.publicKey.hasSignature) {
+             int sigSz = wc_ecc_sig_size(&keySig->ks.ecc.key);
+@@ -15175,32 +15401,20 @@ static int BuildUserAuthRequestEccCert(WOLFSSH* ssh,
+             switch (keySig->sigId) {
+                 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+                 case ID_ECDSA_SHA2_NISTP256:
++                case ID_X509V3_ECDSA_SHA2_NISTP256:
+                     names = cannedKeyAlgoEcc256Names;
+                     break;
+                 #endif
+                 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+                 case ID_ECDSA_SHA2_NISTP384:
++                case ID_X509V3_ECDSA_SHA2_NISTP384:
+                     names = cannedKeyAlgoEcc384Names;
+                     break;
+                 #endif
+                 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+                 case ID_ECDSA_SHA2_NISTP521:
+-                    names = cannedKeyAlgoEcc521Names;
+-                    break;
+-                #endif
+-                #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
+-                case ID_X509V3_ECDSA_SHA2_NISTP256:
+-                    names = cannedKeyAlgoX509Ecc256Names;
+-                    break;
+-                #endif
+-                #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+-                case ID_X509V3_ECDSA_SHA2_NISTP384:
+-                    names = cannedKeyAlgoX509Ecc384Names;
+-                    break;
+-                #endif
+-                #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+                 case ID_X509V3_ECDSA_SHA2_NISTP521:
+-                    names = cannedKeyAlgoX509Ecc521Names;
++                    names = cannedKeyAlgoEcc521Names;
+                     break;
+                 #endif
+                 default:
+@@ -16372,6 +16586,53 @@ int SendChannelOpenForward(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel)
+     WLOG(WS_LOG_DEBUG, "Leaving SendChannelOpenForward(), ret = %d", ret);
+     return ret;
+ }
++
++
++/* Send SSH_MSG_CHANNEL_OPEN for "direct-streamlocal@openssh.com":
++ *   string    socket path
++ *   string    reserved (empty)
++ *   uint32    reserved (0)
++ */
++int SendChannelOpenStreamLocal(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel)
++{
++    int ret = WS_SUCCESS;
++    byte* streamData = NULL;
++    word32 pathSz, streamDataSz, idx;
++
++    WLOG(WS_LOG_DEBUG, "Entering SendChannelOpenStreamLocal()");
++
++    if (ssh == NULL || channel == NULL || channel->socketPath == NULL)
++        ret = WS_BAD_ARGUMENT;
++
++    if (ret == WS_SUCCESS) {
++        pathSz = (word32)WSTRLEN(channel->socketPath);
++        /* payload: string(path) + string("") + uint32(0) */
++        streamDataSz = LENGTH_SZ + pathSz + LENGTH_SZ + UINT32_SZ;
++        streamData = (byte*)WMALLOC(streamDataSz,
++                ssh->ctx->heap, DYNTYPE_TEMP);
++        if (streamData == NULL)
++            ret = WS_MEMORY_E;
++    }
++
++    if (ret == WS_SUCCESS) {
++        idx = 0;
++        c32toa(pathSz, streamData + idx);
++        idx += LENGTH_SZ;
++        WMEMCPY(streamData + idx, channel->socketPath, pathSz);
++        idx += pathSz;
++        c32toa(0, streamData + idx); /* reserved string length = 0 */
++        idx += LENGTH_SZ;
++        c32toa(0, streamData + idx); /* reserved uint32 = 0 */
++
++        ret = SendChannelOpen(ssh, channel, streamData, streamDataSz);
++    }
++
++    if (streamData)
++        WFREE(streamData, ssh->ctx->heap, DYNTYPE_TEMP);
++
++    WLOG(WS_LOG_DEBUG, "Leaving SendChannelOpenStreamLocal(), ret = %d", ret);
++    return ret;
++}
+ #endif /* WOLFSSH_FWD */
+ 
+ 
+diff --git a/wolfssh/src/ssh.c b/wolfssh/src/ssh.c
+index cf686a7dcac4b8465845726ac1bc1d992c64f848..e3eb57c3976c103eb69d72346840fce0a60ddaad 100644
+--- a/wolfssh/src/ssh.c
++++ b/wolfssh/src/ssh.c
+@@ -2768,6 +2768,44 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNew(WOLFSSH* ssh,
+     return wolfSSH_ChannelFwdNewLocal(ssh, host, hostPort, origin, originPort);
+ }
+ 
++
++WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewStreamLocal(WOLFSSH* ssh,
++        const char* socketPath)
++{
++    WOLFSSH_CHANNEL* newChannel = NULL;
++    int ret = WS_SUCCESS;
++
++    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelFwdNewStreamLocal()");
++
++    if (ssh == NULL || ssh->ctx == NULL || socketPath == NULL)
++        ret = WS_BAD_ARGUMENT;
++
++    if (ret == WS_SUCCESS) {
++        newChannel = ChannelNew(ssh, ID_CHANTYPE_STREAMLOCAL_DIRECT,
++                ssh->ctx->windowSz, ssh->ctx->maxPacketSz);
++        if (newChannel == NULL)
++            ret = WS_MEMORY_E;
++    }
++    if (ret == WS_SUCCESS)
++        ret = ChannelUpdateStreamLocal(newChannel, socketPath, 1);
++    if (ret == WS_SUCCESS)
++        ret = SendChannelOpenStreamLocal(ssh, newChannel);
++
++    if (ret != WS_SUCCESS) {
++        void* heap = (ssh != NULL && ssh->ctx != NULL) ? ssh->ctx->heap : NULL;
++        ChannelDelete(newChannel, heap);
++        newChannel = NULL;
++    }
++
++    if (newChannel != NULL)
++        ChannelAppend(ssh, newChannel);
++
++    WLOG(WS_LOG_DEBUG,
++            "Leaving wolfSSH_ChannelFwdNewStreamLocal(), newChannel = %p",
++            newChannel);
++    return newChannel;
++}
++
+ #endif /* WOLFSSH_FWD */
+ 
+ 
+diff --git a/wolfssh/src/wolfscp.c b/wolfssh/src/wolfscp.c
+index e368a93ea0b77170c305d1ae89702662cb33107a..436c251b552bf07a113910139932c9418b8237d7 100644
+--- a/wolfssh/src/wolfscp.c
++++ b/wolfssh/src/wolfscp.c
+@@ -39,6 +39,10 @@
+ #include <wolfssh/internal.h>
+ #include <wolfssh/log.h>
+ 
++#ifdef USE_WINDOWS_API
++    #include <share.h>
++#endif
++
+ 
+ #ifdef NO_INLINE
+     #include <wolfssh/misc.h>
+@@ -1706,10 +1710,8 @@ static char* MakeScpCmd(const char* name, char dir, void* heap)
+     char* cmd;
+     int sz;
+ 
+-    sz = WSNPRINTF(NULL, 0, "scp -%c %s", dir, name) + 1;
+-    if (sz <= 0) {
+-        return NULL;
+-    }
++    /* "scp -X " = 6 chars + name + '\0' */
++    sz = (int)WSTRLEN(name) + 8;
+     cmd = (char*)WMALLOC(sz, heap, DYNTYPE_STRING);
+     if (cmd == NULL) {
+         return NULL;
+@@ -1828,8 +1830,15 @@ static int ExtractFileName(const char* filePath, char* fileName,
+         idx++;
+     }
+ 
+-    if (separator < 0)
+-        return WS_BAD_ARGUMENT;
++    if (separator < 0) {
++        /* No directory separator: the entire path is the file name */
++        fileLen = pathLen;
++        if (fileLen + 1 > fileNameSz)
++            return WS_SCP_PATH_LEN_E;
++        WMEMCPY(fileName, filePath, fileLen);
++        fileName[fileLen] = '\0';
++        return WS_SUCCESS;
++    }
+ 
+     fileLen = pathLen - separator - 1;
+     if (fileLen + 1 > fileNameSz)
+diff --git a/wolfssh/wolfssh/internal.h b/wolfssh/wolfssh/internal.h
+index 9d204137f2e840aed57a40ded0ec5d9082b21ad5..dba8fe8ae67da02ddb6bc4305d05b94d2e4fa85b 100644
+--- a/wolfssh/wolfssh/internal.h
++++ b/wolfssh/wolfssh/internal.h
+@@ -391,6 +391,8 @@ enum {
+     ID_CHANTYPE_TCPIP_FORWARD,
+     ID_CHANTYPE_TCPIP_DIRECT,
+     ID_CHANTYPE_AUTH_AGENT,
++    ID_CHANTYPE_STREAMLOCAL_DIRECT,
++    ID_CHANTYPE_STREAMLOCAL_FORWARD,
+ 
+     /* Global Request IDs */
+     ID_GLOBREQ_TCPIP_FWD,
+@@ -974,8 +976,10 @@ struct WOLFSSH_CHANNEL {
+     word32 hostPort;
+     char* origin;
+     word32 originPort;
++    char* socketPath;
+     int fwdFd;
+     int isDirect;
++    int isStreamLocal;
+ #endif /* WOLFSSH_FWD */
+     WOLFSSH_BUFFER inputBuffer;
+     char* command;
+@@ -993,6 +997,8 @@ WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelNew(WOLFSSH*, byte, word32, word32);
+ WOLFSSH_LOCAL int ChannelUpdatePeer(WOLFSSH_CHANNEL*, word32, word32, word32);
+ WOLFSSH_LOCAL int ChannelUpdateForward(WOLFSSH_CHANNEL*,
+         const char*, word32, const char*, word32, int);
++WOLFSSH_LOCAL int ChannelUpdateStreamLocal(WOLFSSH_CHANNEL*,
++        const char*, int);
+ WOLFSSH_LOCAL int ChannelAppend(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel);
+ WOLFSSH_LOCAL void ChannelDelete(WOLFSSH_CHANNEL*, void*);
+ WOLFSSH_LOCAL WOLFSSH_CHANNEL* ChannelFind(WOLFSSH*, word32, byte);
+@@ -1105,6 +1111,7 @@ WOLFSSH_LOCAL int SendUserAuthPkOk(WOLFSSH*, const byte*, word32,
+ WOLFSSH_LOCAL int SendRequestSuccess(WOLFSSH*, int);
+ WOLFSSH_LOCAL int SendChannelOpenSession(WOLFSSH*, WOLFSSH_CHANNEL*);
+ WOLFSSH_LOCAL int SendChannelOpenForward(WOLFSSH*, WOLFSSH_CHANNEL*);
++WOLFSSH_LOCAL int SendChannelOpenStreamLocal(WOLFSSH*, WOLFSSH_CHANNEL*);
+ WOLFSSH_LOCAL int SendChannelOpenConf(WOLFSSH*, WOLFSSH_CHANNEL*);
+ WOLFSSH_LOCAL int SendChannelOpenFail(WOLFSSH* ssh, word32 channel,
+         word32 reason, const char* description, const char* language);
+diff --git a/wolfssh/wolfssh/ssh.h b/wolfssh/wolfssh/ssh.h
+index b5b04eb5967aca9c5113b7c52b66dafc62768376..8f69f180ede8d9f471db48a08c44f52204fdf85b 100644
+--- a/wolfssh/wolfssh/ssh.h
++++ b/wolfssh/wolfssh/ssh.h
+@@ -188,6 +188,8 @@ typedef enum WS_FwdCbAction {
+     WOLFSSH_FWD_REMOTE_SETUP,
+     WOLFSSH_FWD_REMOTE_CLEANUP,
+     WOLFSSH_FWD_CHANNEL_ID,
++    WOLFSSH_FWD_STREAMLOCAL_SETUP,
++    WOLFSSH_FWD_STREAMLOCAL_CLEANUP,
+ } WS_FwdCbAction;
+ 
+ typedef enum WS_FwdIoCbAction {
+@@ -211,6 +213,8 @@ WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewLocal(WOLFSSH*,
+         const char*, word32, const char*, word32);
+ WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewRemote(WOLFSSH*,
+         const char*, word32, const char*, word32);
++WOLFSSH_API WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewStreamLocal(WOLFSSH*,
++        const char*);
+ WOLFSSH_API int wolfSSH_CTX_SetFwdCb(WOLFSSH_CTX*,
+         WS_CallbackFwd, WS_CallbackFwdIO);
+ WOLFSSH_API int wolfSSH_SetFwdCbCtx(WOLFSSH*, void*);
+diff --git a/wolfssh/wolfssh/test.h b/wolfssh/wolfssh/test.h
+index 0f22fd64c858cfc70a7a2ae34e51cc1512c12294..353019eb959d617eb1f9dc0b01bbec5780e82ffa 100644
+--- a/wolfssh/wolfssh/test.h
++++ b/wolfssh/wolfssh/test.h
+@@ -52,6 +52,11 @@
+     #endif
+     #define SOCKET_T SOCKET
+     #define NUM_SOCKETS 5
++    /* Windows 10 1803+ supports AF_UNIX via afunix.h */
++    #if defined(_WIN32_WINNT) && (_WIN32_WINNT >= 0x0A00)
++        #include <afunix.h>
++        #define WOLFSSH_HAVE_UNIX_SOCKET
++    #endif
+ #elif defined(WOLFSSL_VXWORKS)
+     #include <unistd.h>
+     #include <hostLib.h>
+@@ -192,6 +197,8 @@
+     #ifndef SO_NOSIGPIPE
+         #include <signal.h>  /* ignore SIGPIPE */
+     #endif
++    #include <sys/un.h>
++    #define WOLFSSH_HAVE_UNIX_SOCKET
+     #define SOCKET_T int
+     #define NUM_SOCKETS 5
+ #endif /* USE_WINDOWS_API */
+@@ -626,6 +633,30 @@ static INLINE void tcp_socket(WS_SOCKET_T* sockFd, int targetProtocol)
+ #endif
+ 
+ 
++#ifdef WOLFSSH_HAVE_UNIX_SOCKET
++static INLINE void unix_socket(WS_SOCKET_T* sockFd)
++{
++    *sockFd = socket(AF_UNIX, SOCK_STREAM, 0);
++    if (*sockFd == WOLFSSH_SOCKET_INVALID)
++        err_sys("unix socket failed\n");
++#ifdef SO_NOSIGPIPE
++    {
++        int       on = 1;
++        socklen_t len = sizeof(on);
++        setsockopt(*sockFd, SOL_SOCKET, SO_NOSIGPIPE, &on, len);
++    }
++#endif
++}
++
++static INLINE void build_addr_unix(struct sockaddr_un* addr, const char* path)
++{
++    memset(addr, 0, sizeof(*addr));
++    addr->sun_family = AF_UNIX;
++    strncpy(addr->sun_path, path, sizeof(addr->sun_path) - 1);
++}
++#endif /* WOLFSSH_HAVE_UNIX_SOCKET */
++
++
+ #if defined(WOLFSSH_TEST_SERVER) && !defined(FREESCALE_MQX)\
+                                  && !defined(WOLFSSH_LWIP)
+ 
+diff --git a/wrapper/CMakeLists.txt b/wrapper/CMakeLists.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..c757bde771a429dfa73a6866d5724f0c33f35a98
+--- /dev/null
++++ b/wrapper/CMakeLists.txt
+@@ -0,0 +1,97 @@
++cmake_minimum_required(VERSION 3.10)
++
++# Cross-compile detection: Linux host targeting Windows
++if(NOT WIN32 AND NOT CMAKE_CROSSCOMPILING)
++    find_program(_MINGW_GCC x86_64-w64-mingw32-gcc)
++    if(_MINGW_GCC AND CMAKE_BINARY_DIR MATCHES "build-win")
++        set(CMAKE_SYSTEM_NAME Windows)
++        set(CMAKE_SYSTEM_PROCESSOR x86_64)
++        set(CMAKE_C_COMPILER "${_MINGW_GCC}")
++        set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
++        set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
++        set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
++    endif()
++endif()
++
++project(wolfssh_wrapper C)
++
++# Find the pre-built wolfssh/wolfssl from the superbuild output
++# Detect platform and set appropriate paths
++if(WIN32)
++    set(WOLFSSH_PREFIX "${CMAKE_SOURCE_DIR}/../out/build/windows/wolfssh-src" CACHE PATH
++        "Path to wolfssh source dir (Windows)")
++    set(WOLFSSL_PREFIX "${CMAKE_SOURCE_DIR}/../out/build/windows/stage/wolfssl" CACHE PATH
++        "Path to wolfssl install prefix (Windows)")
++    set(WOLFSSH_BUILD "${CMAKE_SOURCE_DIR}/../out/build/windows/wolfssh-src" CACHE PATH
++        "Path to wolfssh build dir for config.h (Windows)")
++    set(LIB_DIRS
++        "${CMAKE_SOURCE_DIR}/../out/build/windows/wolfssh-src/src/.libs"
++        "${CMAKE_SOURCE_DIR}/../out/build/windows/stage/wolfssl/lib"
++        CACHE STRING "Library search paths (Windows)")
++else()
++    set(WOLFSSH_PREFIX "${CMAKE_SOURCE_DIR}/../out/build/linux/stage/wolfssh" CACHE PATH
++        "Path to wolfssh install prefix")
++    set(WOLFSSL_PREFIX "${CMAKE_SOURCE_DIR}/../out/build/linux/stage/wolfssl" CACHE PATH
++        "Path to wolfssl install prefix")
++    set(WOLFSSH_BUILD "${CMAKE_SOURCE_DIR}/../out/build/linux/wolfssh-src" CACHE PATH
++        "Path to wolfssh build dir (for config.h)")
++    set(LIB_DIRS "${CMAKE_SOURCE_DIR}/../out/release/linux/lib" CACHE STRING
++        "Library search paths")
++endif()
++
++# Includes
++include_directories(
++    ${WOLFSSH_PREFIX}/include
++    ${WOLFSSL_PREFIX}/include
++    ${WOLFSSH_BUILD}
++    ${CMAKE_CURRENT_SOURCE_DIR}
++)
++
++# Library search path
++link_directories(${LIB_DIRS})
++
++# ─── Python headers ───
++if(WIN32)
++    # MinGW cross-compile: look for Windows Python headers if available
++    find_path(PYTHON_INCLUDE_DIR Python.h
++        HINTS /usr/x86_64-w64-mingw32/include/python3)
++else()
++    execute_process(
++        COMMAND python3 -c "import sysconfig; print(sysconfig.get_path('include'))"
++        OUTPUT_VARIABLE PYTHON_INCLUDE_DIR
++        OUTPUT_STRIP_TRAILING_WHITESPACE
++    )
++endif()
++if(NOT PYTHON_INCLUDE_DIR)
++    message(FATAL_ERROR "Python headers not found — required for unified build")
++endif()
++message(STATUS "Python include: ${PYTHON_INCLUDE_DIR}")
++
++# ─── Common compile definitions ───
++set(COMPILE_DEFS
++    HAVE_CONFIG_H
++    WOLFSSH_TEST_CLIENT
++    WOLFSSH_CERTS
++    WOLFSSH_SFTP
++    WOLFSSH_FWD
++    OPENSSL_ALL
++    WOLFSSL_IP_ALT_NAME
++)
++
++add_library(wolfssh_wrapper SHARED wolfssh_wrapper.c)
++set_target_properties(wolfssh_wrapper PROPERTIES PREFIX "")
++target_compile_definitions(wolfssh_wrapper PRIVATE ${COMPILE_DEFS})
++target_include_directories(wolfssh_wrapper PRIVATE ${PYTHON_INCLUDE_DIR})
++
++# Compiler flags
++if(WIN32)
++    target_compile_options(wolfssh_wrapper PRIVATE -Wall -Wno-unused-function)
++    target_compile_definitions(wolfssh_wrapper PRIVATE USE_WINDOWS_API WIN32_LEAN_AND_MEAN)
++    target_link_libraries(wolfssh_wrapper wolfssh wolfssl ws2_32 m)
++else()
++    target_compile_options(wolfssh_wrapper PRIVATE -fPIC -Wall -Wno-unused-function)
++    target_link_libraries(wolfssh_wrapper wolfssh wolfssl pthread m)
++endif()
++
++# Install
++install(TARGETS wolfssh_wrapper DESTINATION lib)
+diff --git a/wrapper/wolfssh_demo.py b/wrapper/wolfssh_demo.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..e2eb27ef49f3f8fd7dd0d4fb573172fd47ce5463
+--- /dev/null
++++ b/wrapper/wolfssh_demo.py
+@@ -0,0 +1,116 @@
++import logging
++import paramiko
++import os
++
++from wolfssh_x509 import build_x509_auth_strategy
++
++class xssh:
++    def __init__(self, name, user, addr, port: int = 22, pswd: str = '',
++                 log: logging = None, usex509: bool = False,
++                 keyfile: str | None = None,
++                 certfile: str | None = None, cafile: str | None = None):
++        self.name = name
++        self.user = user
++        self.addr = addr
++        self.port = port
++        self.pswd = pswd
++        self.log = log if log else logging.getLogger("paramiko")
++        self.log.setLevel(logging.WARNING)
++        self.ssh: paramiko.SSHClient
++        self.usex509 = usex509
++        self.keyfile = os.path.expanduser(keyfile) if keyfile else None
++        self.certfile = certfile
++        self.cafile = cafile
++
++    def __init(self):
++        """建立 SSH 连接"""
++        try:
++            self.ssh = paramiko.SSHClient()
++            self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
++            key_filename = self.keyfile
++            config = None
++            if os.path.exists(os.path.expanduser("~/.ssh/config")):
++                config = paramiko.SSHConfig()
++                with open(os.path.expanduser("~/.ssh/config")) as f:
++                    config.parse(f)
++                host_config = config.lookup(self.addr)
++                if key_filename is None:
++                    key_filename = host_config.get("identityfile", [None])[0]
++                    key_filename = (
++                        os.path.expanduser(key_filename) if key_filename else None
++                    )
++            else:
++                print("SSH config file not found, using default settings.")
++
++            self.log.debug(
++                f"Connecting ssh channel {self.name} "
++                f"by user:{self.user} addr: {self.addr} port: {self.port}, password: {self.pswd}"
++            )
++
++            self.ssh.connect(
++                hostname=self.addr,
++                port=self.port,
++                username=self.user,
++                password=self.pswd,
++                key_filename=key_filename,
++                timeout=30,
++                auth_strategy=build_x509_auth_strategy(
++                    username=self.user,
++                    keyfile=key_filename,
++                    certfile=self.certfile,
++                    cafile=self.cafile,
++                ) if self.usex509 else None,
++            )
++            self.log.debug(f'Succeed to connect ssh channel {self.name} '
++                           f'by user:{self.user} addr: {self.addr} port: {self.port}, password: {self.pswd}')
++        except Exception as e:
++            self.log.error(f"SSH connection setup failed: {repr(e)}")
++            return False
++
++    def __deinit(self):
++        if self.ssh is not None:
++            self.ssh.close()
++
++    def send_cmd(self, cmd: str, timeout, eols, interval):
++        self.__init()
++        output=''
++
++        try:
++            _, stdout, stderr = self.ssh.exec_command(cmd, timeout=timeout, get_pty=True)
++            output += (stdout.read().decode('utf-8') + stderr.read().decode('utf-8'))
++            result = True
++        except Exception as e:
++            self.log.error(f'Failed to execute command: {e}')
++            result = False
++
++        self.__deinit()
++        return result, output
++
++if __name__ == "__main__":
++    import sys
++
++    logging.basicConfig(
++        level=logging.DEBUG,
++        format="%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
++        datefmt="%Y-%m-%d %H:%M:%S",
++        handlers=[logging.StreamHandler(sys.stdout)],
++    )
++
++    HOST = "192.168.2.62"
++    USER = "root"
++    PORT = 22
++    KEYFILE = "~/.ssh/debug.key"
++
++    ssh = xssh(
++        name="test-x509",
++        user=USER,
++        addr=HOST,
++        port=PORT,
++        pswd="",
++        log=logging.getLogger(__name__),
++        usex509=True,
++        keyfile=KEYFILE,
++    )
++    result, output = ssh.send_cmd("uname -a", timeout=30, eols=[], interval=None)
++    print(f"RESULT: {result}")
++    print(f"OUTPUT: {output}")
+diff --git a/wrapper/wolfssh_wrapper.c b/wrapper/wolfssh_wrapper.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..137f17a26cb0251464678311887be0c8e8de38e0
+--- /dev/null
++++ b/wrapper/wolfssh_wrapper.c
+@@ -0,0 +1,401 @@
++/* wolfssh_wrapper.c — Python C extension for wolfssh X.509 authentication.
++ *
++ * Provides wolfssh_wrapper.X509Identity for paramiko integration.
++ * No C API exported — pure Python C extension only.
++ */
++
++#ifdef HAVE_CONFIG_H
++    #include <config.h>
++#endif
++
++#ifdef WOLFSSL_USER_SETTINGS
++    #include <wolfssl/wolfcrypt/settings.h>
++#else
++    #include <wolfssl/options.h>
++#endif
++
++#include <wolfssh/ssh.h>
++#include <wolfssh/internal.h>
++#include <wolfssl/wolfcrypt/ecc.h>
++#include <wolfssl/wolfcrypt/coding.h>
++#include <wolfssl/wolfcrypt/hash.h>
++#include <wolfssl/wolfcrypt/random.h>
++
++#ifdef WOLFSSH_CERTS
++    #include <wolfssl/wolfcrypt/asn.h>
++    #include <wolfssl/wolfcrypt/asn_public.h>
++#endif
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#define PY_SSIZE_T_CLEAN
++#include <Python.h>
++
++/* ════════════════════════════════════════════════════════════════════════════
++ * Helpers
++ * ════════════════════════════════════════════════════════════════════════════ */
++
++static int load_file(const char* filename, byte** out, word32* outSz)
++{
++    FILE* f = fopen(filename, "rb");
++    if (!f) return -1;
++    fseek(f, 0, SEEK_END);
++    long sz = ftell(f);
++    fseek(f, 0, SEEK_SET);
++    if (sz <= 0) { fclose(f); return -1; }
++    byte* buf = (byte*)malloc((size_t)sz + 1);
++    if (!buf) { fclose(f); return -1; }
++    if ((long)fread(buf, 1, (size_t)sz, f) != sz) {
++        free(buf); fclose(f); return -1;
++    }
++    buf[sz] = '\0';
++    fclose(f);
++    *out = buf; *outSz = (word32)sz;
++    return 0;
++}
++
++/* ── X.509 key type strings (static, no allocation) ── */
++
++#ifdef WOLFSSH_CERTS
++static const byte x509_p256[] = "x509v3-ecdsa-sha2-nistp256";
++static const byte x509_p384[] = "x509v3-ecdsa-sha2-nistp384";
++static const byte x509_p521[] = "x509v3-ecdsa-sha2-nistp521";
++
++static const byte* resolve_x509_type(const byte* priv_key_type, word32* outSz)
++{
++    if (priv_key_type) {
++        const char* pt = (const char*)priv_key_type;
++        if (strstr(pt, "nistp521")) { *outSz = sizeof(x509_p521)-1; return x509_p521; }
++        if (strstr(pt, "nistp384")) { *outSz = sizeof(x509_p384)-1; return x509_p384; }
++    }
++    *outSz = sizeof(x509_p256)-1; return x509_p256;
++}
++#endif
++
++/* ── SSH wire format ── */
++
++static void write_u32be(byte* dst, word32 val)
++{
++    dst[0] = (byte)((val >> 24) & 0xFF);
++    dst[1] = (byte)((val >> 16) & 0xFF);
++    dst[2] = (byte)((val >>  8) & 0xFF);
++    dst[3] = (byte)((val      ) & 0xFF);
++}
++
++static word32 mpint_encode(byte* dst, const byte* val, word32 len)
++{
++    while (len > 1 && val[0] == 0x00) { val++; len--; }
++    if (len == 0) { write_u32be(dst, 1); dst[4] = 0x00; return 5; }
++    if (val[0] & 0x80) {
++        write_u32be(dst, len + 1); dst[4] = 0x00;
++        memcpy(dst + 5, val, len); return 4 + 1 + len;
++    }
++    write_u32be(dst, len); memcpy(dst + 4, val, len); return 4 + len;
++}
++
++static int parse_der_sig(const byte* der, word32 derSz,
++    const byte** r_out, word32* r_len, const byte** s_out, word32* s_len)
++{
++    word32 i = 0;
++    if (derSz < 6 || der[i] != 0x30) return -1;
++    i++;
++    i += (der[i] & 0x80) ? (der[i] & 0x7F) + 1 : 1;
++    if (i >= derSz || der[i] != 0x02) return -1;
++    i++; *r_len = der[i]; i++;
++    if (i + *r_len > derSz) return -1;
++    *r_out = der + i; i += *r_len;
++    if (i >= derSz || der[i] != 0x02) return -1;
++    i++; *s_len = der[i]; i++;
++    if (i + *s_len > derSz) return -1;
++    *s_out = der + i;
++    return 0;
++}
++
++static int get_ecc_hash_type(const char* algorithm)
++{
++    if (!algorithm) return WC_HASH_TYPE_SHA256;
++    if (strstr(algorithm, "nistp521")) return WC_HASH_TYPE_SHA512;
++    if (strstr(algorithm, "nistp384")) return WC_HASH_TYPE_SHA384;
++    return WC_HASH_TYPE_SHA256;
++}
++
++/* ════════════════════════════════════════════════════════════════════════════
++ * X509Identity Python type
++ * ════════════════════════════════════════════════════════════════════════════ */
++
++typedef struct {
++    PyObject_HEAD
++    byte*   priv_key;       /* DER-encoded private key */
++    word32  priv_key_sz;
++    byte*   pub_key;        /* cert DER (or raw) */
++    word32  pub_key_sz;
++    const byte* key_type;   /* "x509v3-ecdsa-sha2-nistp256" (static) */
++    word32  key_type_sz;
++    PyObject* py_key_type;  /* cached str */
++    PyObject* py_ssh_blob;  /* cached bytes */
++} X509Identity;
++
++static void X509_dealloc(X509Identity* self)
++{
++    WFREE(self->priv_key, NULL, DYNTYPE_FILE);
++    free(self->pub_key);
++    Py_XDECREF(self->py_key_type);
++    Py_XDECREF(self->py_ssh_blob);
++    Py_TYPE(self)->tp_free((PyObject*)self);
++}
++
++static PyObject* X509_get_key_type(X509Identity* self, PyObject* a)
++{
++    (void)a;
++    Py_INCREF(self->py_key_type);
++    return self->py_key_type;
++}
++
++static PyObject* X509_get_ssh_blob(X509Identity* self, PyObject* a)
++{
++    (void)a;
++    Py_INCREF(self->py_ssh_blob);
++    return self->py_ssh_blob;
++}
++
++static PyObject* X509_sign(X509Identity* self, PyObject* args)
++{
++    Py_buffer data_buf;
++    const char* algorithm;
++    if (!PyArg_ParseTuple(args, "y*s", &data_buf, &algorithm)) return NULL;
++
++    /* Strip "x509v3-" prefix from algorithm for ECC signing */
++    const char* ecdsa_algo = algorithm;
++    if (strncmp(ecdsa_algo, "x509v3-", 7) == 0) ecdsa_algo += 7;
++    word32 algoLen = (word32)strlen(ecdsa_algo);
++
++    /* Hash */
++    int hashType = get_ecc_hash_type(ecdsa_algo);
++    int digestSz = wc_HashGetDigestSize((enum wc_HashType)hashType);
++    if (digestSz <= 0) {
++        PyBuffer_Release(&data_buf);
++        return PyErr_Format(PyExc_RuntimeError, "unsupported hash: %s", ecdsa_algo);
++    }
++    byte digest[WC_MAX_DIGEST_SIZE];
++    if (wc_Hash((enum wc_HashType)hashType,
++            (const byte*)data_buf.buf, (word32)data_buf.len,
++            digest, sizeof(digest)) != 0) {
++        PyBuffer_Release(&data_buf);
++        PyErr_SetString(PyExc_RuntimeError, "hash failed");
++        return NULL;
++    }
++
++    /* ECC sign → DER signature */
++    WC_RNG rng;
++    ecc_key ecc;
++    word32 idx = 0;
++    if (wc_InitRng(&rng) != 0) {
++        PyBuffer_Release(&data_buf);
++        PyErr_SetString(PyExc_RuntimeError, "RNG init failed");
++        return NULL;
++    }
++    if (wc_ecc_init(&ecc) != 0) {
++        wc_FreeRng(&rng);
++        PyBuffer_Release(&data_buf);
++        PyErr_SetString(PyExc_RuntimeError, "ECC init failed");
++        return NULL;
++    }
++    byte derSig[256];
++    word32 derSigSz = sizeof(derSig);
++    int signRet = wc_EccPrivateKeyDecode(self->priv_key, &idx, &ecc, self->priv_key_sz);
++    if (signRet == 0)
++        signRet = wc_ecc_sign_hash(digest, (word32)digestSz, derSig, &derSigSz, &rng, &ecc);
++    wc_ecc_free(&ecc);
++    wc_FreeRng(&rng);
++    if (signRet != 0) {
++        PyBuffer_Release(&data_buf);
++        PyErr_SetString(PyExc_RuntimeError, "ECC sign failed");
++        return NULL;
++    }
++
++    /* Parse DER sig → r, s */
++    const byte *r_raw, *s_raw;
++    word32 r_len, s_len;
++    if (parse_der_sig(derSig, derSigSz, &r_raw, &r_len, &s_raw, &s_len) != 0) {
++        PyBuffer_Release(&data_buf);
++        PyErr_SetString(PyExc_RuntimeError, "DER sig parse failed");
++        return NULL;
++    }
++    while (r_len > 1 && r_raw[0] == 0x00) { r_raw++; r_len--; }
++    while (s_len > 1 && s_raw[0] == 0x00) { s_raw++; s_len--; }
++
++    /* Encode r, s as SSH mpints */
++    byte mpint_buf[512];
++    word32 mpint_len  = mpint_encode(mpint_buf, r_raw, r_len);
++    mpint_len        += mpint_encode(mpint_buf + mpint_len, s_raw, s_len);
++
++    /* Build SSH wire signature: string(algo) + string(r||s) */
++    word32 wire_sz = 4 + algoLen + 4 + mpint_len;
++    byte* wire = (byte*)PyMem_Malloc(wire_sz);
++    if (!wire) { PyBuffer_Release(&data_buf); return PyErr_NoMemory(); }
++
++    word32 off = 0;
++    write_u32be(wire+off, algoLen);                off += 4;
++    memcpy(wire+off, ecdsa_algo, algoLen);          off += algoLen;
++    write_u32be(wire+off, mpint_len);               off += 4;
++    memcpy(wire+off, mpint_buf, mpint_len);         off += mpint_len;
++
++    PyBuffer_Release(&data_buf);
++    PyObject* result = PyBytes_FromStringAndSize((char*)wire, wire_sz);
++    PyMem_Free(wire);
++    return result;
++}
++
++static PyMethodDef X509_methods[] = {
++    {"get_key_type", (PyCFunction)X509_get_key_type, METH_NOARGS, NULL},
++    {"get_ssh_blob", (PyCFunction)X509_get_ssh_blob, METH_NOARGS, NULL},
++    {"sign",         (PyCFunction)X509_sign,         METH_VARARGS, NULL},
++    {NULL, NULL, 0, NULL}
++};
++
++static int X509_init(X509Identity* self, PyObject* args, PyObject* kwargs)
++{
++    static const char* kwlist[] = {"keyfile", "certfile", "cafile", NULL};
++    const char *keyfile = NULL, *certfile = NULL, *cafile = NULL;
++
++    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|zz",
++            (char**)kwlist, &keyfile, &certfile, &cafile))
++        return -1;
++
++    (void)cafile; /* reserved for future use */
++
++    /* Free previous state (for re-init) */
++    WFREE(self->priv_key, NULL, DYNTYPE_FILE); self->priv_key = NULL;
++    free(self->pub_key);  self->pub_key = NULL;
++    Py_CLEAR(self->py_key_type);
++    Py_CLEAR(self->py_ssh_blob);
++
++    /* Load private key via wolfssh */
++    byte isPrivate = 0;
++    const byte* priv_type = NULL;
++    word32 priv_type_sz = 0;
++    int ret = wolfSSH_ReadKey_file(keyfile,
++            &self->priv_key, &self->priv_key_sz,
++            &priv_type, &priv_type_sz, &isPrivate, NULL);
++    if (ret != 0) {
++        PyErr_Format(PyExc_RuntimeError, "failed to load key: %s", keyfile);
++        return -1;
++    }
++
++    /* Resolve x509 key type */
++    self->key_type = resolve_x509_type(priv_type, &self->key_type_sz);
++    self->py_key_type = PyUnicode_FromStringAndSize(
++        (const char*)self->key_type, self->key_type_sz);
++    if (self->py_key_type == NULL) {
++        /* CPython already set the exception */
++        return -1;
++    }
++
++    /* Load certificate → DER */
++#ifdef WOLFSSH_CERTS
++    {
++        const char* certSrc = certfile ? certfile : keyfile;
++        byte* raw = NULL;
++        word32 rawSz = 0;
++        if (load_file(certSrc, &raw, &rawSz) != 0) {
++            PyErr_Format(PyExc_RuntimeError, "failed to read cert: %s", certSrc);
++            return -1;
++        }
++        const char* pemHdr = "-----BEGIN CERTIFICATE-----";
++        if (rawSz > 27 && strstr((char*)raw, pemHdr)) {
++            /* PEM → DER: concatenate all cert DER blocks */
++            byte* combined = NULL;
++            word32 combinedSz = 0;
++            const char* p = (const char*)raw;
++            const char* end = (const char*)raw + rawSz;
++            while (p < end) {
++                const char* begin = strstr(p, pemHdr);
++                if (!begin) break;
++                const char* endM = strstr(begin, "-----END CERTIFICATE-----");
++                if (!endM) break;
++                endM += strlen("-----END CERTIFICATE-----");
++                while (endM < end && (*endM == '\r' || *endM == '\n')) endM++;
++                int pemBlockSz = (int)(endM - begin);
++                byte derBuf[4096];
++                int derSz = wc_CertPemToDer(
++                    (const unsigned char*)begin, pemBlockSz,
++                    derBuf, (int)sizeof(derBuf), CERT_TYPE);
++                if (derSz > 0) {
++                    byte* tmp = (byte*)realloc(combined, combinedSz + derSz);
++                    if (!tmp) { free(combined); free(raw); PyErr_NoMemory(); return -1; }
++                    combined = tmp;
++                    memcpy(combined + combinedSz, derBuf, derSz);
++                    combinedSz += derSz;
++                }
++                p = endM;
++            }
++            free(raw);
++            if (!combined || combinedSz == 0) {
++                PyErr_SetString(PyExc_RuntimeError, "no valid certs in PEM");
++                return -1;
++            }
++            self->pub_key = combined;
++            self->pub_key_sz = combinedSz;
++        } else {
++            self->pub_key = raw;
++            self->pub_key_sz = rawSz;
++        }
++    }
++#endif
++
++    /* Build SSH blob: string(algo) | uint32(1) | string(cert_DER) | uint32(0) */
++    word32 blob_sz = 4 + self->key_type_sz + 4 + 4 + self->pub_key_sz + 4;
++    byte* blob = (byte*)PyMem_Malloc(blob_sz);
++    if (!blob) { PyErr_NoMemory(); return -1; }
++
++    word32 off = 0;
++    write_u32be(blob+off, self->key_type_sz);          off += 4;
++    memcpy(blob+off, self->key_type, self->key_type_sz); off += self->key_type_sz;
++    write_u32be(blob+off, 1);                           off += 4;
++    write_u32be(blob+off, self->pub_key_sz);           off += 4;
++    memcpy(blob+off, self->pub_key, self->pub_key_sz); off += self->pub_key_sz;
++    write_u32be(blob+off, 0);                           off += 4;
++
++    self->py_ssh_blob = PyBytes_FromStringAndSize((char*)blob, blob_sz);
++    PyMem_Free(blob);
++    if (self->py_ssh_blob == NULL) {
++        Py_CLEAR(self->py_key_type);
++        return -1;
++    }
++    return 0;
++}
++
++static PyTypeObject X509IdentityType = {
++    PyVarObject_HEAD_INIT(NULL, 0)
++    .tp_name      = "wolfssh_wrapper.X509Identity",
++    .tp_basicsize = sizeof(X509Identity),
++    .tp_dealloc   = (destructor)X509_dealloc,
++    .tp_flags     = Py_TPFLAGS_DEFAULT,
++    .tp_doc       = "X.509 identity for paramiko.",
++    .tp_methods   = X509_methods,
++    .tp_new       = PyType_GenericNew,
++    .tp_init      = (initproc)X509_init,
++};
++
++/* ════════════════════════════════════════════════════════════════════════════
++ * Module
++ * ════════════════════════════════════════════════════════════════════════════ */
++
++static struct PyModuleDef module_def = {
++    PyModuleDef_HEAD_INIT, "wolfssh_wrapper",
++    "wolfssh X.509 auth extension for paramiko", -1, NULL,
++};
++
++PyMODINIT_FUNC PyInit_wolfssh_wrapper(void)
++{
++    if (PyType_Ready(&X509IdentityType) < 0) return NULL;
++    PyObject* m = PyModule_Create(&module_def);
++    if (!m) return NULL;
++    Py_INCREF(&X509IdentityType);
++    if (PyModule_AddObject(m, "X509Identity", (PyObject*)&X509IdentityType) < 0) {
++        Py_DECREF(&X509IdentityType); Py_DECREF(m); return NULL;
++    }
++    return m;
++}
+diff --git a/wrapper/wolfssh_x509.py b/wrapper/wolfssh_x509.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..c74aa1c31473dd65783c0397b3551edacacee779
+--- /dev/null
++++ b/wrapper/wolfssh_x509.py
+@@ -0,0 +1,63 @@
++"""wolfssh_x509 — minimal paramiko X.509 bridge.
++
++Backed by wolfssh_wrapper C extension (compiled from wolfssh_wrapper.c).
++"""
++
++import os
++from pathlib import Path
++
++import paramiko
++from paramiko import auth_strategy
++
++# Import C extension for X.509 identity support
++import wolfssh_wrapper as _native
++
++
++class _BlobCarrier:
++    """Mimics paramiko public_blob interface (key_type + key_blob attrs)."""
++    __slots__ = ("key_type", "key_blob")
++
++    def __init__(self, key_type: str, key_blob: bytes):
++        self.key_type = key_type
++        self.key_blob = key_blob
++
++
++class _WolfsshX509PKey(paramiko.PKey):
++    """paramiko PKey backed by wolfssh C extension (x509 only)."""
++
++    def __init__(self, identity):
++        super().__init__()
++        self._identity = identity
++        self.public_blob = _BlobCarrier(
++            identity.get_key_type(), identity.get_ssh_blob())
++
++    def get_name(self):
++        return self._identity.get_key_type()
++
++    def asbytes(self):
++        return self._identity.get_ssh_blob()
++
++    def sign_ssh_data(self, data, algorithm=None):
++        algo = algorithm or self._identity.get_key_type()
++        return self._identity.sign(bytes(data), algo)
++
++
++class _WolfsshX509AuthStrategy(auth_strategy.AuthStrategy):
++    def __init__(self, username: str, keyfile: str,
++                 certfile: str | None = None, cafile: str | None = None):
++        super().__init__(ssh_config=None)
++        identity = _native.X509Identity(keyfile=keyfile,
++                                        certfile=certfile, cafile=cafile)
++        self._source = auth_strategy.InMemoryPrivateKey(
++            username, _WolfsshX509PKey(identity))
++
++    def get_sources(self):
++        yield self._source
++
++
++def build_x509_auth_strategy(username: str, keyfile: str,
++                             certfile: str | None = None,
++                             cafile: str | None = None):
++    return _WolfsshX509AuthStrategy(
++        username=username, keyfile=os.fspath(Path(keyfile).expanduser()),
++        certfile=certfile, cafile=cafile)
