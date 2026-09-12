@@ -23,6 +23,7 @@ E1 is the only OCI Baton test server. The company source snapshot itself is unch
 The E1 runtime uses the company wolfSSH 1.5.0 source built with `-DTEST_IPV6`, because the
 company default Linux build selects the IPv4-only branch of wolfSSH's test/client socket
 helper. The runtime lives under `~/.local/remotessh/` on E1.
+Rebuild that Baton-specific binary with `scripts/build-baton-wolfssh.sh`; generated files stay under ignored `build/`.
 
 `Host gcpp` matches the intended production shape:
 
