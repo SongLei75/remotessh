@@ -1,5 +1,5 @@
-# Baton simulation matching the target workflow:
-# PC OpenSSH -> OCI E1 -> company wolfssh on E1 -> GCP PKIX-SSHD over IPv6.
+# Baton path matching the product workflow:
+# PC OpenSSH -> OCI E1 -> company wolfssh on E1 -> board simulator.
 Host gcpp
     HostName 2603:c020:25:ae01:85f0:8240:1c51:a5b9
     HostKeyAlias ve1.songlei.me
@@ -9,4 +9,4 @@ Host gcpp
     ServerAliveInterval 30
     ServerAliveCountMax 3
     RequestTTY force
-    RemoteCommand env HOME=/home/ubuntu/.local/remotessh/home LD_LIBRARY_PATH=/home/ubuntu/.local/remotessh/company-wolf/lib /home/ubuntu/.local/remotessh/company-wolf/bin/wolfssh -X -i /home/ubuntu/.local/remotessh/config/client-identity.pem -l songlei -p 2222 2600:1900:4041:46c:0:2:0:0
+    RemoteCommand env LD_LIBRARY_PATH=/home/ubuntu/.local/remotessh/company-wolf/lib /home/ubuntu/.local/remotessh/company-wolf/bin/wolfssh -t -X -i /home/ubuntu/.ssh/client-identity.pem -l songlei -p 2222 2600:1900:4041:46c:0:2:0:0

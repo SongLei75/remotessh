@@ -1,12 +1,14 @@
-# gcpp local configuration
+# GCP board simulator test configuration
 
-This directory is intentionally ignored except for this file.
+Runtime identity follows the product layout and is not stored in this directory:
 
-Local development may place the following runtime material here:
+- local direct client identity: `~/.ssh/client-identity.pem`
+- local direct host key database: `~/.ssh/known_hosts`
+- E1 Baton client identity: `/home/ubuntu/.ssh/client-identity.pem`
+- E1 Baton host key database: `/home/ubuntu/.ssh/known_hosts`
 
-- X.509 client certificate and private key
-- CA certificate/private state used only to create test identities
-- `known_hosts`
-- generated DER/CSR/serial files
+`direct.ssh_config` only provides the local OpenSSH/gcloud IAP management path.
+`baton.ssh_config` provides the first OpenSSH hop to E1; E1 then runs company wolfssh.
 
-These files are machine/deployment specific and must not be committed.
+The GCP simulator currently requires IPv6 for the E1 -> GCP hop. `-DTEST_IPV6`
+is test-only and must not be committed into the company wolf source/build configuration.

@@ -3,16 +3,13 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 WOLF=$(cd "$ROOT/../wolf" && pwd)
 LOCAL_PORT=${DIRECT_PORT:-22021}
-HOME_DIR="$ROOT/.runtime/direct-home"
-LOG="$ROOT/.runtime/iap-direct.log"
-mkdir -p "$HOME_DIR/.ssh" "$ROOT/.runtime"
-awk '{$1="127.0.0.1"; print}' "$ROOT/config/gcpp/known_hosts" > "$HOME_DIR/.ssh/known_hosts"
-chmod 600 "$HOME_DIR/.ssh/known_hosts"
+LOG="/tmp/remotessh-iap-direct.$$.log"
 cleanup() {
     if [[ -n "${IAP_PID:-}" ]]; then
         kill "$IAP_PID" 2>/dev/null || true
         wait "$IAP_PID" 2>/dev/null || true
     fi
+    rm -f "$LOG"
 }
 trap cleanup EXIT
 /snap/bin/gcloud compute start-iap-tunnel gcp-free-dev 2222 \
@@ -30,10 +27,8 @@ for _ in $(seq 1 60); do
     sleep 0.25
 done
 [[ "$ready" == 1 ]] || { cat "$LOG"; exit 1; }
-# gcloud opens the local listener slightly before the IAP WebSocket backend
-# is ready to carry SSH bytes.
 sleep 2
-HOME="$HOME_DIR" LD_LIBRARY_PATH="$WOLF/out/release/linux/lib" \
+LD_LIBRARY_PATH="$WOLF/out/release/linux/lib" \
     "$WOLF/out/release/linux/bin/wolfssh" -X \
-    -i "$ROOT/config/gcpp/client-identity.pem" -l songlei -p "$LOCAL_PORT" \
+    -i "$HOME/.ssh/client-identity.pem" -l songlei -p "$LOCAL_PORT" \
     127.0.0.1 "${*:-hostname}"
