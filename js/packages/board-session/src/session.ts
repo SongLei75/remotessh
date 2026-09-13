@@ -14,7 +14,7 @@ export class BoardSession extends EventEmitter {
   constructor(private readonly options: BoardSessionOptions) {
     super();
     this.maxBufferedChars = options.maxBufferedChars ?? 2_000_000;
-    this.transport = createTransport(options.board, options.route);
+    this.transport = createTransport(options.route);
     this.transport.events.on('data', (event: BoardDataEvent) => this.onData(event));
     this.transport.events.on('exit', event => { this.closed = true; this.emit('exit', event); });
     this.transport.events.on('close', () => { this.closed = true; this.emit('close'); });
@@ -39,6 +39,27 @@ export class BoardSession extends EventEmitter {
     if (this.started) return;
     await this.transport.start();
     this.started = true;
+    await this.waitUntilReady(this.options.readyTimeoutMs ?? 10000);
+  }
+
+  private async waitUntilReady(timeoutMs: number): Promise<void> {
+    const marker = `__BOARD_READY_${randomBytes(12).toString('hex')}__`;
+    const fromOffset = this.currentOffset;
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline && !this.closed && this.currentOffset === fromOffset) {
+      await new Promise(resolve => setTimeout(resolve, 40));
+    }
+    if (this.closed || this.currentOffset === fromOffset) {
+      throw new Error(`board shell did not become ready within ${timeoutMs} ms`);
+    }
+
+    this.transport.write(`printf '\\n${marker}\\n'\r`);
+    while (Date.now() < deadline && !this.closed) {
+      if (this.snapshot(fromOffset).text.includes(marker)) return;
+      await new Promise(resolve => setTimeout(resolve, 40));
+    }
+    throw new Error(`board shell did not become ready within ${timeoutMs} ms`);
   }
 
   write(data: string | Buffer): void {
@@ -79,7 +100,7 @@ export class BoardSession extends EventEmitter {
     const marker = `__BOARD_DONE_${randomBytes(12).toString('hex')}__`;
     const markerRegex = new RegExp(`${marker}:(-?\\d+)\\r?\\n`);
     const fromOffset = this.currentOffset;
-    this.write(`${command}\nprintf '\\n${marker}:%s\\n' "$?"\n`);
+    this.write(`${command}\rprintf '\\n${marker}:%s\\n' "$?"\r`);
 
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline && !this.closed) {

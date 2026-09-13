@@ -1,20 +1,19 @@
 {
   "name": "@songlei/board-session",
   "version": "0.1.0",
-  "description": "Unified local/Baton wolfSSH terminal session runner",
+  "description": "Persistent board terminal session with local and Baton transports",
   "license": "UNLICENSED",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist",
-    "native",
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "node --test dist/*.test.js"
+    "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "node-pty": "1.2.0-beta.15",
     "ssh2": "1.17.0"
   },
   "devDependencies": {

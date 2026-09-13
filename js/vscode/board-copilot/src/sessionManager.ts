@@ -1,243 +1,191 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { randomUUID } from 'node:crypto';
-import * as vscode from 'vscode';
+import { ChildProcess, execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
+import * as fs from 'node:fs/promises';
 import {
   BoardSession,
   BoardTarget,
   ExecutionRoute,
-  OutputSnapshot,
   WolfsshRuntime,
+  buildLocalWolfsshRoute,
+  buildRemoteWolfsshCommand,
 } from '@songlei/board-session';
 
-export interface OpenSessionInput {
-  mode: 'local' | 'baton';
-  boardHost: string;
-  boardPort?: number;
-  boardUser: string;
-  batonHost?: string;
-  batonPort?: number;
-  batonUser?: string;
-}
+const execFileAsync = promisify(execFile);
 
-interface ManagedSession {
-  id: string;
-  label: string;
-  session: BoardSession;
-  cursor: number;
-}
+const DIRECT_PORT = 22021;
+const GCP_BOARD: BoardTarget = {
+  host: '2600:1900:4041:46c:0:2:0:0',
+  port: 2222,
+  username: 'songlei',
+};
+const LOCAL_WOLFSSH: WolfsshRuntime = {
+  executable: path.join(os.homedir(), 'project/wolf/out/release/linux/bin/wolfssh'),
+  identityFile: path.join(os.homedir(), '.ssh/client-identity.pem'),
+  libraryPath: path.join(os.homedir(), 'project/wolf/out/release/linux/lib'),
+};
+const BATON_WOLFSSH: WolfsshRuntime = {
+  executable: '/home/ubuntu/.local/remotessh/company-wolf/bin/wolfssh',
+  identityFile: '/home/ubuntu/.ssh/client-identity.pem',
+  libraryPath: '/home/ubuntu/.local/remotessh/company-wolf/lib',
+};
 
-export interface SessionResult {
-  sessionId: string;
-  output: string;
-  nextOffset: number;
-  truncatedBeforeOffset: number;
-}
+export class BoardSessionManager {
+  private session?: BoardSession;
+  private label?: string;
+  private cursor = 0;
+  private directTunnel?: ChildProcess;
 
-function expandPath(value: string): string {
-  if (!value) return value;
-  const workspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
-  let result = value
-    .replace(/\$\{userHome\}/g, os.homedir())
-    .replace(/\$\{workspaceFolder\}/g, workspace);
-  if (result === '~') return os.homedir();
-  if (result.startsWith('~/') || result.startsWith('~\\')) {
-    result = path.join(os.homedir(), result.slice(2));
-  }
-  return result;
-}
+  get activeLabel(): string | undefined { return this.label; }
+  get isActive(): boolean { return !!this.session && !this.session.isClosed; }
 
-function setting(name: string): string {
-  return vscode.workspace.getConfiguration('boardCopilot').get<string>(name, '').trim();
-}
-
-function requiredSetting(name: string): string {
-  const value = setting(name);
-  if (!value) throw new Error(`Missing VS Code setting: boardCopilot.${name}`);
-  return expandPath(value);
-}
-
-function buildLocalRuntime(): WolfsshRuntime {
-  const executable = expandPath(setting('local.wolfsshPath') || 'wolfssh');
-  const configFile = setting('local.configFile');
-  const destination = setting('local.destination');
-  if (configFile || destination) {
-    if (!configFile || !destination) {
-      throw new Error('boardCopilot.local.configFile and boardCopilot.local.destination must be set together');
+  async openDirectDemo(): Promise<void> {
+    await this.close();
+    await this.startDirectTunnel();
+    try {
+      const route = buildLocalWolfsshRoute(
+        { host: '127.0.0.1', port: DIRECT_PORT, username: GCP_BOARD.username },
+        LOCAL_WOLFSSH,
+      );
+      await this.open(route, 'direct:gcp');
+    } catch (error) {
+      await this.stopDirectTunnel();
+      throw error;
     }
-    return { executable, configFile: expandPath(configFile), destination };
-  }
-  return {
-    executable,
-    identity: {
-      certificateFile: requiredSetting('local.certificateFile'),
-      privateKeyFile: requiredSetting('local.privateKeyFile'),
-      knownHostsFile: requiredSetting('local.knownHostsFile'),
-      hostKeyAlias: setting('local.hostKeyAlias') || undefined,
-    },
-    proxyCommand: setting('local.proxyCommand') || undefined,
-  };
-}
-
-function buildBatonRuntime(): WolfsshRuntime {
-  const executable = setting('baton.remoteWolfsshPath') || '/opt/boardssh/bin/wolfssh';
-  const configFile = setting('baton.remoteConfigFile');
-  const destination = setting('baton.remoteDestination');
-  if (configFile || destination) {
-    if (!configFile || !destination) {
-      throw new Error('boardCopilot.baton.remoteConfigFile and boardCopilot.baton.remoteDestination must be set together');
-    }
-    return { executable, configFile, destination };
-  }
-  return {
-    executable,
-    identity: {
-      certificateFile: setting('baton.remoteCertificateFile') || '/opt/boardssh/config/client-cert.pem',
-      privateKeyFile: setting('baton.remotePrivateKeyFile') || '/opt/boardssh/config/client-key.pem',
-      knownHostsFile: setting('baton.remoteKnownHostsFile') || '/opt/boardssh/config/known_hosts',
-      hostKeyAlias: setting('baton.remoteHostKeyAlias') || undefined,
-    },
-  };
-}
-
-export class BoardSessionManager implements vscode.Disposable {
-  private readonly sessions = new Map<string, ManagedSession>();
-  private activeSessionId?: string;
-  private readonly passwordKeys = new Set<string>();
-
-  constructor(private readonly context: vscode.ExtensionContext) {}
-
-  private getManaged(sessionId?: string): ManagedSession {
-    const id = sessionId || this.activeSessionId;
-    if (!id) throw new Error('No active board session. Open one with boardOpen first.');
-    const managed = this.sessions.get(id);
-    if (!managed) throw new Error(`Board session not found: ${id}`);
-    return managed;
   }
 
-  private async batonPassword(input: OpenSessionInput): Promise<string> {
-    const key = `board-copilot.baton-password:${input.batonUser}@${input.batonHost}:${input.batonPort ?? 22}`;
-    this.passwordKeys.add(key);
-    const saved = await this.context.secrets.get(key);
-    if (saved) return saved;
-
-    const password = await vscode.window.showInputBox({
-      title: 'Board Copilot: Baton password',
-      prompt: `Password for ${input.batonUser}@${input.batonHost}:${input.batonPort ?? 22}`,
-      password: true,
-      ignoreFocusOut: true,
-    });
-    if (password === undefined) throw new Error('Baton password entry was cancelled');
-    if (!password) throw new Error('Baton password is empty');
-    await this.context.secrets.store(key, password);
-    return password;
+  async openBatonDemo(boardName: string, hours: number): Promise<void> {
+    await this.close();
+    await this.open(await this.resolveGcppRoute(), `baton:${boardName}:${hours}h`);
   }
 
-  async open(input: OpenSessionInput): Promise<SessionResult & { label: string }> {
-    if (!input.mode) throw new Error('Connection mode is required: local or baton');
-    if (!input.boardHost?.trim()) throw new Error('Board host/IP is required');
-    if (!input.boardUser?.trim()) throw new Error('Board username is required');
+  async run(command: string, timeoutMs = 30000) {
+    if (!this.session) throw new Error('No active board session');
+    const result = await this.session.run(command, timeoutMs);
+    this.cursor = result.nextOffset;
+    return result;
+  }
 
-    if (this.activeSessionId) {
-      await this.kill(this.activeSessionId);
-    }
+  getOutput() {
+    if (!this.session) throw new Error('No active board session');
+    const result = this.session.snapshot(this.cursor);
+    this.cursor = result.nextOffset;
+    return result;
+  }
 
-    const board: BoardTarget = {
-      host: input.boardHost.trim(),
-      port: input.boardPort ?? 22,
-      username: input.boardUser.trim(),
-    };
+  async send(text: string, appendNewline = false) {
+    if (!this.session) throw new Error('No active board session');
+    const from = this.cursor;
+    this.session.write(text + (appendNewline ? '\r' : ''));
+    const result = await this.session.waitForQuiet(from, 200, 1200);
+    this.cursor = result.nextOffset;
+    return result;
+  }
 
-    let route: ExecutionRoute;
-    if (input.mode === 'local') {
-      route = { kind: 'local', wolfssh: buildLocalRuntime() };
-    } else {
-      if (!input.batonHost?.trim()) throw new Error('Baton host/IP is required for baton mode');
-      if (!input.batonUser?.trim()) throw new Error('Baton username is required for baton mode');
-      const password = await this.batonPassword(input);
-      route = {
-        kind: 'baton',
-        host: input.batonHost.trim(),
-        port: input.batonPort ?? 22,
-        username: input.batonUser.trim(),
-        password,
-        hostFingerprintSha256: setting('baton.hostFingerprintSha256') || undefined,
-        wolfssh: buildBatonRuntime(),
-      };
-    }
+  async close(): Promise<void> {
+    const session = this.session;
+    this.session = undefined;
+    this.label = undefined;
+    this.cursor = 0;
+    await session?.close();
+    await this.stopDirectTunnel();
+  }
 
-    const id = randomUUID();
-    const label = `${input.mode}:${board.username}@${board.host}:${board.port}`;
-    const session = new BoardSession({ board, route });
-    session.on('error', error => {
-      console.error(`[Board Copilot ${id}]`, error);
-    });
+  private async open(route: ExecutionRoute, label: string): Promise<void> {
+    const session = new BoardSession({ route });
     await session.start();
-    const initial = await session.waitForQuiet(0, 200, 1200);
-    const managed: ManagedSession = { id, label, session, cursor: initial.nextOffset };
-    this.sessions.set(id, managed);
-    this.activeSessionId = id;
-    return this.result(managed, initial, { label });
+    this.session = session;
+    this.label = label;
+    this.cursor = session.currentOffset;
   }
 
-  async run(command: string, sessionId?: string, timeoutMs = 10000): Promise<SessionResult & { completed: boolean; exitCode?: number }> {
-    const managed = this.getManaged(sessionId);
-    const result = await managed.session.run(command, timeoutMs);
-    managed.cursor = result.nextOffset;
+  private async startDirectTunnel(): Promise<void> {
+    if (await this.isDirectPortListening()) {
+      throw new Error(`Direct IAP port ${DIRECT_PORT} is already in use`);
+    }
+
+    const child = spawn('/snap/bin/gcloud', [
+      'compute', 'start-iap-tunnel', 'gcp-free-dev', '2222',
+      `--local-host-port=127.0.0.1:${DIRECT_PORT}`,
+      '--project=gen-lang-client-0429627202',
+      '--zone=us-west1-b',
+      '--verbosity=warning',
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    this.directTunnel = child;
+
+    let errorText = '';
+    child.stderr?.on('data', data => { errorText += data.toString(); });
+
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        this.directTunnel = undefined;
+        throw new Error(`gcloud IAP tunnel exited: ${errorText.trim() || child.exitCode}`);
+      }
+      if (await this.isDirectPortListening()) return;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    await this.stopDirectTunnel();
+    throw new Error('gcloud IAP tunnel did not become ready');
+  }
+
+  private async stopDirectTunnel(): Promise<void> {
+    const child = this.directTunnel;
+    this.directTunnel = undefined;
+    if (!child || child.exitCode !== null) return;
+
+    child.kill('SIGTERM');
+    await new Promise<void>(resolve => {
+      const timer = setTimeout(() => {
+        if (child.exitCode === null) child.kill('SIGKILL');
+        resolve();
+      }, 1000);
+      child.once('exit', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  }
+
+  private async isDirectPortListening(): Promise<boolean> {
+    try {
+      const { stdout } = await execFileAsync('ss', ['-ltnH', 'sport', '=', `:${DIRECT_PORT}`]);
+      return stdout.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private async resolveGcppRoute(): Promise<ExecutionRoute> {
+    const { stdout } = await execFileAsync('ssh', ['-G', 'gcpp'], { maxBuffer: 1024 * 1024 });
+    const values = new Map<string, string>();
+    for (const line of stdout.split(/\r?\n/)) {
+      const split = line.indexOf(' ');
+      if (split > 0 && !values.has(line.slice(0, split))) {
+        values.set(line.slice(0, split), line.slice(split + 1));
+      }
+    }
+
+    const host = values.get('hostname');
+    const username = values.get('user');
+    const identity = values.get('identityfile');
+    if (!host || !username || !identity) {
+      throw new Error('Host gcpp must define hostname, user, and identityfile');
+    }
+
+    const identityFile = identity.startsWith('~/')
+      ? path.join(os.homedir(), identity.slice(2))
+      : identity;
+
     return {
-      sessionId: managed.id,
-      output: result.text,
-      nextOffset: result.nextOffset,
-      truncatedBeforeOffset: result.truncatedBeforeOffset,
-      completed: result.completed,
-      exitCode: result.exitCode,
+      kind: 'baton',
+      host,
+      port: Number(values.get('port') ?? 22),
+      username,
+      privateKey: await fs.readFile(identityFile),
+      command: buildRemoteWolfsshCommand(GCP_BOARD, BATON_WOLFSSH),
     };
-  }
-
-  getOutput(sessionId?: string, fromOffset?: number): SessionResult {
-    const managed = this.getManaged(sessionId);
-    const snapshot = managed.session.snapshot(fromOffset ?? managed.cursor);
-    managed.cursor = snapshot.nextOffset;
-    return this.result(managed, snapshot);
-  }
-
-  async send(text: string, appendNewline: boolean, sessionId?: string, waitMs = 400): Promise<SessionResult> {
-    const managed = this.getManaged(sessionId);
-    const from = managed.cursor;
-    managed.session.write(text + (appendNewline ? '\n' : ''));
-    const snapshot = waitMs > 0
-      ? await managed.session.waitForQuiet(from, Math.min(waitMs, 250), waitMs)
-      : managed.session.snapshot(from);
-    managed.cursor = snapshot.nextOffset;
-    return this.result(managed, snapshot);
-  }
-
-  async kill(sessionId?: string): Promise<{ sessionId: string; closed: true }> {
-    const managed = this.getManaged(sessionId);
-    await managed.session.close();
-    this.sessions.delete(managed.id);
-    if (this.activeSessionId === managed.id) this.activeSessionId = undefined;
-    return { sessionId: managed.id, closed: true };
-  }
-
-  async clearBatonPasswords(): Promise<void> {
-    for (const key of this.passwordKeys) await this.context.secrets.delete(key);
-    this.passwordKeys.clear();
-  }
-
-  async dispose(): Promise<void> {
-    await Promise.all([...this.sessions.values()].map(item => item.session.close().catch(() => undefined)));
-    this.sessions.clear();
-    this.activeSessionId = undefined;
-  }
-
-  private result<T extends object = Record<string, never>>(managed: ManagedSession, snapshot: OutputSnapshot, extra?: T): SessionResult & T {
-    return {
-      sessionId: managed.id,
-      output: snapshot.text,
-      nextOffset: snapshot.nextOffset,
-      truncatedBeforeOffset: snapshot.truncatedBeforeOffset,
-      ...(extra ?? {} as T),
-    } as SessionResult & T;
   }
 }

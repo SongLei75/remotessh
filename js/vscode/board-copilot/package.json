@@ -1,7 +1,7 @@
 {
   "name": "board-copilot",
-  "displayName": "Board Copilot",
-  "description": "Route Copilot Agent terminal operations to boards through wolfSSH, locally or through Baton.",
+  "displayName": "Carizon Board Demo",
+  "description": "Minimal @carizon board participant backed by BoardSession.",
   "version": "0.1.0",
   "publisher": "songlei-local",
   "license": "UNLICENSED",
@@ -18,6 +18,7 @@
   "main": "./dist/extension.js",
   "files": [
     "dist/extension.js",
+    "dist/build/Release/pty.node",
     "README.md",
     "LICENSE",
     "package.json"
@@ -25,7 +26,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "npm run typecheck && esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --external:vscode --external:*.node --outfile=dist/extension.js",
-    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository -o dist/board-copilot.vsix"
+    "package": "npm run build && mkdir -p dist/build/Release && cp /usr/share/code/resources/app/node_modules.asar.unpacked/node-pty/build/Release/pty.node dist/build/Release/pty.node && vsce package --no-dependencies --allow-missing-repository -o dist/board-copilot.vsix"
   },
   "dependencies": {
     "@songlei/board-session": "0.1.0"
@@ -38,250 +39,19 @@
     "typescript": "^6.0.0"
   },
   "contributes": {
-    "commands": [
+    "chatParticipants": [
       {
-        "command": "board-copilot.clearBatonPasswords",
-        "title": "Board Copilot: Clear Saved Baton Passwords"
-      }
-    ],
-    "configuration": {
-      "title": "Board Copilot",
-      "properties": {
-        "boardCopilot.local.wolfsshPath": {
-          "type": "string",
-          "default": "wolfssh",
-          "description": "Local wolfssh executable. Supports ~, ${userHome}, and ${workspaceFolder}."
-        },
-        "boardCopilot.local.certificateFile": {
-          "type": "string",
-          "default": "",
-          "description": "Local X.509 client certificate used for direct board connections."
-        },
-        "boardCopilot.local.privateKeyFile": {
-          "type": "string",
-          "default": "",
-          "description": "Local private key paired with the X.509 certificate."
-        },
-        "boardCopilot.local.knownHostsFile": {
-          "type": "string",
-          "default": "",
-          "description": "Local known_hosts file used to verify the board SSH host key."
-        },
-        "boardCopilot.local.hostKeyAlias": {
-          "type": "string",
-          "default": "",
-          "description": "Optional host-key alias used for known_hosts matching."
-        },
-        "boardCopilot.local.proxyCommand": {
-          "type": "string",
-          "default": "",
-          "description": "Optional wolfSSH byte-stream ProxyCommand, for example gcloud IAP."
-        },
-        "boardCopilot.local.configFile": {
-          "type": "string",
-          "default": "",
-          "description": "Optional ssh_config file. When set together with destination, it replaces the direct identity settings."
-        },
-        "boardCopilot.local.destination": {
-          "type": "string",
-          "default": "",
-          "description": "Host alias in local.configFile."
-        },
-        "boardCopilot.baton.remoteWolfsshPath": {
-          "type": "string",
-          "default": "/opt/boardssh/bin/wolfssh",
-          "description": "wolfssh executable path inside the Baton container."
-        },
-        "boardCopilot.baton.remoteCertificateFile": {
-          "type": "string",
-          "default": "/opt/boardssh/config/client-cert.pem",
-          "description": "X.509 client certificate path inside Baton."
-        },
-        "boardCopilot.baton.remotePrivateKeyFile": {
-          "type": "string",
-          "default": "/opt/boardssh/config/client-key.pem",
-          "description": "Private key path inside Baton."
-        },
-        "boardCopilot.baton.remoteKnownHostsFile": {
-          "type": "string",
-          "default": "/opt/boardssh/config/known_hosts",
-          "description": "known_hosts path inside Baton."
-        },
-        "boardCopilot.baton.remoteHostKeyAlias": {
-          "type": "string",
-          "default": "",
-          "description": "Optional board host-key alias inside Baton."
-        },
-        "boardCopilot.baton.hostFingerprintSha256": {
-          "type": "string",
-          "default": "",
-          "description": "Optional Baton SSH host-key fingerprint in SHA256:base64 form."
-        },
-        "boardCopilot.baton.remoteConfigFile": {
-          "type": "string",
-          "default": "",
-          "description": "Optional ssh_config inside Baton. Set with remoteDestination to use a profile instead of direct identity arguments."
-        },
-        "boardCopilot.baton.remoteDestination": {
-          "type": "string",
-          "default": "",
-          "description": "Host alias in baton.remoteConfigFile."
-        }
-      }
-    },
-    "languageModelTools": [
-      {
-        "name": "board-copilot_openSession",
-        "displayName": "Open Board Terminal Session",
-        "toolReferenceName": "boardOpen",
-        "canBeReferencedInPrompt": true,
-        "icon": "$(remote)",
-        "modelDescription": "Open a persistent interactive terminal session on an embedded board through wolfSSH. Use this before any board terminal operation. Never guess connection mode, board host, board user, Baton host, Baton port, or Baton user: ask the user in chat for missing non-secret fields. Never ask the user to type a Baton password into chat; the extension collects it with a masked secure input. After this succeeds, use the board-copilot run/get/send/kill tools for all board terminal operations instead of the built-in terminal tool.",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "mode": {
-              "type": "string",
-              "enum": [
-                "local",
-                "baton"
-              ],
-              "description": "Where wolfSSH runs: local or baton."
-            },
-            "boardHost": {
-              "type": "string",
-              "description": "Board IP address or hostname."
-            },
-            "boardPort": {
-              "type": "number",
-              "minimum": 1,
-              "maximum": 65535,
-              "default": 22
-            },
-            "boardUser": {
-              "type": "string",
-              "description": "Board SSH username."
-            },
-            "batonHost": {
-              "type": "string",
-              "description": "Required only for baton mode: Baton container SSH host/IP."
-            },
-            "batonPort": {
-              "type": "number",
-              "minimum": 1,
-              "maximum": 65535,
-              "description": "Required only for baton mode: Baton SSH port."
-            },
-            "batonUser": {
-              "type": "string",
-              "description": "Required only for baton mode: Baton SSH username, commonly root."
-            }
-          },
-          "required": [
-            "mode",
-            "boardHost",
-            "boardUser"
-          ]
-        }
-      },
-      {
-        "name": "board-copilot_runInTerminal",
-        "displayName": "Run Command in Board Terminal",
-        "toolReferenceName": "boardRun",
-        "canBeReferencedInPrompt": true,
-        "icon": "$(terminal)",
-        "modelDescription": "Run a shell command in the active persistent wolfSSH board terminal. Use this, not the built-in terminal, for commands intended for the connected board. The command executes in the existing shell so cwd, environment, and shell state persist.",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "command": {
-              "type": "string",
-              "description": "Shell command to run on the board."
-            },
-            "sessionId": {
-              "type": "string",
-              "description": "Optional board session id. Omit to use the active session."
-            },
-            "timeoutMs": {
-              "type": "number",
-              "minimum": 100,
-              "maximum": 120000,
-              "default": 10000
-            }
-          },
-          "required": [
-            "command"
-          ]
-        }
-      },
-      {
-        "name": "board-copilot_getTerminalOutput",
-        "displayName": "Get Board Terminal Output",
-        "toolReferenceName": "boardOutput",
-        "canBeReferencedInPrompt": true,
-        "icon": "$(output)",
-        "modelDescription": "Read new output from the persistent wolfSSH board terminal, especially after a long-running or interactive command.",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "sessionId": {
-              "type": "string"
-            },
-            "fromOffset": {
-              "type": "number",
-              "minimum": 0,
-              "description": "Optional absolute output offset. Omit to read only output not yet returned by the tools."
-            }
+        "id": "carizon",
+        "name": "carizon",
+        "fullName": "Carizon",
+        "description": "Connect Copilot Chat to a board through BoardSession.",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "board",
+            "description": "Select or connect a board and run board operations."
           }
-        }
-      },
-      {
-        "name": "board-copilot_sendToTerminal",
-        "displayName": "Send Input to Board Terminal",
-        "toolReferenceName": "boardSend",
-        "canBeReferencedInPrompt": true,
-        "icon": "$(arrow-right)",
-        "modelDescription": "Send raw input to the active persistent wolfSSH board terminal. Use for interactive programs, confirmations, or control characters. Set appendNewline when Enter is intended.",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "text": {
-              "type": "string"
-            },
-            "appendNewline": {
-              "type": "boolean",
-              "default": false
-            },
-            "sessionId": {
-              "type": "string"
-            },
-            "waitMs": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 5000,
-              "default": 400
-            }
-          },
-          "required": [
-            "text"
-          ]
-        }
-      },
-      {
-        "name": "board-copilot_killTerminal",
-        "displayName": "Kill Board Terminal Session",
-        "toolReferenceName": "boardKill",
-        "canBeReferencedInPrompt": true,
-        "icon": "$(debug-stop)",
-        "modelDescription": "Close the persistent wolfSSH board terminal and all route resources. Use when board work is finished or the session is stuck.",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "sessionId": {
-              "type": "string"
-            }
-          }
-        }
+        ]
       }
     ]
   }
