@@ -1,8 +1,17 @@
 import * as vscode from 'vscode';
-import { BoardSessionManager } from './sessionManager';
+import { BoardSession } from '@songlei/board-session';
+import { closeDemoSession, openDirectDemo, openJumpDemo } from './demoConnection';
 import { invokeTerminalTool, modelTools, TERMINAL_TOOL_NAMES } from './terminalTools';
 
-const sessions = new BoardSessionManager();
+let session: BoardSession | undefined;
+let sessionLabel: string | undefined;
+
+async function closeSession(): Promise<void> {
+  const current = session;
+  session = undefined;
+  sessionLabel = undefined;
+  await closeDemoSession(current);
+}
 
 async function subscribe(response: vscode.ChatResponseStream): Promise<void> {
   const board = await vscode.window.showQuickPick(
@@ -19,7 +28,9 @@ async function subscribe(response: vscode.ChatResponseStream): Promise<void> {
 
   const hours = Number(duration[0]);
   response.progress(`正在连接 ${board}…`);
-  await sessions.openJumpDemo(board, hours);
+  await closeSession();
+  session = await openJumpDemo();
+  sessionLabel = `jump:${board}:${hours}h`;
   response.markdown(`已选择 **${board}**，模拟预约 **${duration}**。当前 BoardSession 通过 OCI JumpServer 连接到 GCP 测试服务器。`);
 }
 
@@ -32,7 +43,9 @@ async function connectDirect(response: vscode.ChatResponseStream): Promise<void>
   if (pem === undefined) return;
 
   response.progress('正在连接 Direct 测试服务器…');
-  await sessions.openDirectDemo();
+  await closeSession();
+  session = await openDirectDemo();
+  sessionLabel = 'direct:gcp';
   response.markdown('Direct 会话已建立。Demo 忽略上述三个输入值，实际通过 GCP IAP TCP 隧道由本机 company wolfssh 连接测试板。');
 }
 
@@ -41,10 +54,12 @@ async function runAgent(
   response: vscode.ChatResponseStream,
   token: vscode.CancellationToken,
 ): Promise<void> {
-  if (!sessions.isActive) {
+  if (!session || session.isClosed) {
     response.markdown('当前没有板子会话。先使用 `@carizon /board sub` 或 `@carizon /board connect`。');
     return;
   }
+  const activeSession = session;
+  const activeLabel = sessionLabel;
 
   const tools = modelTools();
   const terminalTools = tools.filter(tool => TERMINAL_TOOL_NAMES.has(tool.name));
@@ -55,7 +70,7 @@ async function runAgent(
 
   const messages: vscode.LanguageModelChatMessage[] = [
     vscode.LanguageModelChatMessage.User(
-      `You are the Carizon board assistant. The active board session is ${sessions.activeLabel}. ` +
+      `You are the Carizon board assistant. The active board session is ${activeLabel}. ` +
       'All shell commands for the board MUST use run_in_terminal/get_terminal_output/send_to_terminal/kill_terminal. ' +
       'Those terminal tools are redirected to BoardSession. Never execute board commands through any other execution tool.\n\n' +
       `User request: ${request.prompt}`,
@@ -85,7 +100,7 @@ async function runAgent(
       let result: vscode.LanguageModelToolResult;
       if (TERMINAL_TOOL_NAMES.has(call.name)) {
         response.progress(`Board terminal: ${call.name}`);
-        result = await invokeTerminalTool(sessions, call.name, call.input);
+        result = await invokeTerminalTool(activeSession, closeSession, call.name, call.input);
       } else {
         result = await vscode.lm.invokeTool(call.name, {
           input: call.input,
@@ -130,9 +145,9 @@ async function handleBoardRequest(
 
 export function activate(context: vscode.ExtensionContext): void {
   const participant = vscode.chat.createChatParticipant('carizon', handleBoardRequest);
-  context.subscriptions.push(participant, { dispose: () => void sessions.close() });
+  context.subscriptions.push(participant, { dispose: () => void closeSession() });
 }
 
 export function deactivate(): void {
-  void sessions.close();
+  void closeSession();
 }

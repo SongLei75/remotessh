@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { BoardSessionManager } from './sessionManager';
+import { BoardSession } from '@songlei/board-session';
 
 export const TERMINAL_TOOL_NAMES = new Set([
   'run_in_terminal',
@@ -47,7 +47,8 @@ export function modelTools(): vscode.LanguageModelChatTool[] {
 }
 
 export async function invokeTerminalTool(
-  sessions: BoardSessionManager,
+  session: BoardSession,
+  closeSession: () => Promise<void>,
   name: string,
   inputValue: object,
 ): Promise<vscode.LanguageModelToolResult> {
@@ -58,22 +59,20 @@ export async function invokeTerminalTool(
       const command = stringField(input, 'command', 'cmd', 'commandLine');
       if (!command) return textResult('Missing command');
       const timeout = numberField(input, 'timeout', 'timeoutMs') ?? 30000;
-      const result = await sessions.run(command, timeout);
+      const result = await session.exec(command, timeout);
       return textResult({ terminalId: 'board', output: result.text, exitCode: result.exitCode, completed: result.completed });
     }
-    case 'get_terminal_output': {
-      const result = sessions.getOutput();
-      return textResult({ terminalId: 'board', output: result.text });
-    }
+    case 'get_terminal_output':
+      return textResult({ terminalId: 'board', output: session.read().text });
     case 'send_to_terminal': {
       const text = stringField(input, 'input', 'text', 'data');
       if (text === undefined) return textResult('Missing input');
       const appendNewline = input.appendNewLine === true || input.appendNewline === true;
-      const result = await sessions.send(text, appendNewline);
+      const result = await session.send(text, appendNewline);
       return textResult({ terminalId: 'board', output: result.text });
     }
     case 'kill_terminal':
-      await sessions.close();
+      await closeSession();
       return textResult({ terminalId: 'board', closed: true });
     default:
       throw new Error(`Unsupported terminal tool: ${name}`);

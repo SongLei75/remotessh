@@ -1,37 +1,39 @@
 # @songlei/board-session
 
-Persistent terminal-session core shared by Direct, Docker, and jump-server board access.
+Persistent board session shared by Direct, Docker, and jump-server access.
 
-`BoardSession` owns shell readiness, command completion markers, output buffering, and lifecycle. The route only supplies the byte stream:
+The public session API is intentionally small:
 
-- `local`: spawn a local process through a PTY
-- `jump`: SSH2 to a jump server, allocate a PTY, and execute a remote command
+- `BoardSession.open(route)` — establish the board shell
+- `session.exec(command)` — run a command and return output/exit code
+- `session.read()` — read output produced since the previous read/exec/send
+- `session.send(text)` — write interactive terminal input and collect the immediate output
+- `session.close()` — close the session
 
-Every environment that performs the final board hop must already provide working `wolfssh`/`wolfscp` commands in `PATH`, including their dynamic-library environment.
+Routes only describe how the final company wolfSSH command is invoked:
 
-All three builders use the same company wolfSSH command internally:
+- `buildLocal()` — run `wolfssh` locally
+- `buildDocker()` — run `wolfssh` through `docker exec -it`
+- `buildRemote()` — render `wolfssh` for execution on a jump server
+
+Every environment that performs the final board hop must already provide working `wolfssh`/`wolfscp` commands in `PATH`, including its dynamic-library environment.
+
+All three builders use the same command internally:
 
 ```text
 wolfssh -t -X -i client-identity.pem -l <user> -p <port> <host>
 ```
-
-The same command is adapted by:
-
-- `buildLocal()` -> run the command locally
-- `buildDocker()` -> run the command through `docker exec -it <container>`
-- `buildRemote()` -> render the command for a jump server
 
 Minimal Direct usage:
 
 ```ts
 import { BoardSession, buildLocal } from '@songlei/board-session';
 
-const session = new BoardSession(buildLocal(
+const session = await BoardSession.open(buildLocal(
   { host: '192.168.1.100', username: 'root' },
   '/home/user/.ssh/client-identity.pem',
 ));
 
-await session.start();
-const result = await session.run('uname -a');
+const result = await session.exec('uname -a');
 await session.close();
 ```

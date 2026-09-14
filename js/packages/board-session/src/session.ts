@@ -5,18 +5,18 @@ import { createTransport, SessionTransport } from './transport';
 const MAX_BUFFERED_CHARS = 2_000_000;
 const READY_TIMEOUT_MS = 10_000;
 
-interface OutputSnapshot { text: string; nextOffset: number; }
-interface RunResult extends OutputSnapshot { completed: boolean; exitCode?: number; }
+interface SessionOutput { text: string; }
+interface ExecResult extends SessionOutput { completed: boolean; exitCode?: number; }
 
 export class BoardSession {
   private readonly transport: SessionTransport;
   private buffer = '';
   private baseOffset = 0;
-  private started = false;
+  private readOffset = 0;
   private closed = false;
   private failure?: Error;
 
-  constructor(route: ExecutionRoute) {
+  private constructor(route: ExecutionRoute) {
     this.transport = createTransport(route);
     this.transport.events.on('data', (data: string) => this.onData(data));
     this.transport.events.on('close', () => { this.closed = true; });
@@ -26,8 +26,16 @@ export class BoardSession {
     });
   }
 
+  static async open(route: ExecutionRoute): Promise<BoardSession> {
+    const session = new BoardSession(route);
+    await session.start();
+    session.readOffset = session.currentOffset;
+    return session;
+  }
+
   get isClosed(): boolean { return this.closed; }
-  get currentOffset(): number { return this.baseOffset + this.buffer.length; }
+
+  private get currentOffset(): number { return this.baseOffset + this.buffer.length; }
 
   private onData(data: string): void {
     this.buffer += data;
@@ -38,12 +46,10 @@ export class BoardSession {
     }
   }
 
-  async start(): Promise<void> {
-    if (this.started) return;
+  private async start(): Promise<void> {
     try {
       await this.transport.start();
-      this.started = true;
-      await this.waitUntilReady(READY_TIMEOUT_MS);
+      await this.waitUntilReady();
     } catch (error) {
       this.closed = true;
       await this.transport.kill();
@@ -51,17 +57,17 @@ export class BoardSession {
     }
   }
 
-  private async waitUntilReady(timeoutMs: number): Promise<void> {
+  private async waitUntilReady(): Promise<void> {
     const marker = `__BOARD_READY_${randomBytes(12).toString('hex')}__`;
     const fromOffset = this.currentOffset;
-    const deadline = Date.now() + timeoutMs;
+    const deadline = Date.now() + READY_TIMEOUT_MS;
 
     while (Date.now() < deadline && !this.closed && this.currentOffset === fromOffset) {
       await new Promise(resolve => setTimeout(resolve, 40));
     }
     if (this.failure) throw this.failure;
     if (this.closed || this.currentOffset === fromOffset) {
-      throw new Error(`board shell did not become ready within ${timeoutMs} ms`);
+      throw new Error(`board shell did not become ready within ${READY_TIMEOUT_MS} ms`);
     }
 
     this.transport.write(`printf '\\n${marker}\\n'\r`);
@@ -70,16 +76,20 @@ export class BoardSession {
       await new Promise(resolve => setTimeout(resolve, 40));
     }
     if (this.failure) throw this.failure;
-    throw new Error(`board shell did not become ready within ${timeoutMs} ms`);
+    throw new Error(`board shell did not become ready within ${READY_TIMEOUT_MS} ms`);
   }
 
-  write(data: string | Buffer): void {
+  private assertActive(): void {
     if (this.failure) throw this.failure;
-    if (!this.started || this.closed) throw new Error('board session is not active');
+    if (this.closed) throw new Error('board session is not active');
+  }
+
+  private write(data: string | Buffer): void {
+    this.assertActive();
     this.transport.write(data);
   }
 
-  snapshot(fromOffset = this.baseOffset): OutputSnapshot {
+  private snapshot(fromOffset: number) {
     const start = Math.max(fromOffset, this.baseOffset);
     return {
       text: this.buffer.slice(start - this.baseOffset),
@@ -87,17 +97,19 @@ export class BoardSession {
     };
   }
 
-  async waitForQuiet(fromOffset: number, quietMs = 250, timeoutMs = 2000): Promise<OutputSnapshot> {
+  private async waitForQuiet(fromOffset: number, quietMs: number, timeoutMs: number) {
     const startTime = Date.now();
-    let lastChange = Date.now();
+    let lastChange = startTime;
     let lastOffset = this.currentOffset;
+    let changed = false;
 
     while (Date.now() - startTime < timeoutMs) {
       await new Promise(resolve => setTimeout(resolve, Math.min(quietMs, 50)));
       if (this.currentOffset !== lastOffset) {
         lastOffset = this.currentOffset;
         lastChange = Date.now();
-      } else if (Date.now() - lastChange >= quietMs) {
+        changed = true;
+      } else if (changed && Date.now() - lastChange >= quietMs) {
         break;
       }
       if (this.closed) break;
@@ -106,7 +118,7 @@ export class BoardSession {
     return this.snapshot(fromOffset);
   }
 
-  async run(command: string, timeoutMs = 10000): Promise<RunResult> {
+  async exec(command: string, timeoutMs = 10000): Promise<ExecResult> {
     if (!command.trim()) throw new Error('command is empty');
     const marker = `__BOARD_DONE_${randomBytes(12).toString('hex')}__`;
     const markerRegex = new RegExp(`${marker}:(-?\\d+)\\r?\\n`);
@@ -118,9 +130,9 @@ export class BoardSession {
       const snap = this.snapshot(fromOffset);
       const match = markerRegex.exec(snap.text);
       if (match) {
+        this.readOffset = snap.nextOffset;
         return {
           text: snap.text.slice(0, match.index) + snap.text.slice(match.index + match[0].length),
-          nextOffset: snap.nextOffset,
           completed: true,
           exitCode: Number(match[1]),
         };
@@ -129,7 +141,24 @@ export class BoardSession {
     }
 
     if (this.failure) throw this.failure;
-    return { ...this.snapshot(fromOffset), completed: false };
+    const snap = this.snapshot(fromOffset);
+    this.readOffset = snap.nextOffset;
+    return { text: snap.text, completed: false };
+  }
+
+  read(): SessionOutput {
+    this.assertActive();
+    const snap = this.snapshot(this.readOffset);
+    this.readOffset = snap.nextOffset;
+    return { text: snap.text };
+  }
+
+  async send(text: string, appendNewline = false): Promise<SessionOutput> {
+    const fromOffset = this.currentOffset;
+    this.write(text + (appendNewline ? '\r' : ''));
+    const snap = await this.waitForQuiet(fromOffset, 200, 1200);
+    this.readOffset = snap.nextOffset;
+    return { text: snap.text };
   }
 
   async close(): Promise<void> {
