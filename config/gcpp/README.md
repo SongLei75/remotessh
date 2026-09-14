@@ -1,14 +1,10 @@
-# GCP board simulator test configuration
+# GCP board simulator
 
-Runtime identity follows the product layout and is not stored in this directory:
+Runtime identities are not stored in this directory:
 
-- local direct client identity: `~/.ssh/client-identity.pem`
-- local direct host key database: `~/.ssh/known_hosts`
-- E1 Baton client identity: `/home/ubuntu/.ssh/client-identity.pem`
-- E1 Baton host key database: `/home/ubuntu/.ssh/known_hosts`
+- Direct: `~/.ssh/client-identity.pem` and `~/.ssh/known_hosts`
+- Baton E1: `/home/ubuntu/.ssh/client-identity.pem` and `/home/ubuntu/.ssh/known_hosts`
 
-`direct.ssh_config` only provides the local OpenSSH/gcloud IAP management path.
-`baton.ssh_config` provides the first OpenSSH hop to E1; E1 then runs company wolfssh.
+`baton.ssh_config` describes only the first hop to OCI E1. The second hop is always company wolfSSH running on E1.
 
-The GCP simulator currently requires IPv6 for the E1 -> GCP hop. `-DTEST_IPV6`
-is test-only and must not be committed into the company wolf source/build configuration.
+Direct access does not use an OpenSSH host profile. The demo opens a temporary GCP IAP TCP tunnel and connects through it with local company wolfSSH.

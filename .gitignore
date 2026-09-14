@@ -1,6 +1,5 @@
 # Generated builds
 /build/
-/native/build/
 /js/node_modules/
 /js/**/node_modules/
 /js/**/dist/
@@ -10,7 +9,6 @@
 # Machine/deployment identities and generated PKI material
 /config/gcpp/*
 !/config/gcpp/README.md
-!/config/gcpp/direct.ssh_config
 !/config/gcpp/baton.ssh_config
 
 # Editor / OS noise

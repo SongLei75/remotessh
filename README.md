@@ -1,32 +1,19 @@
 # remotessh
 
-Remote SSH development workspace split from `../wolf`.
+Remote board session layer built on the company wolfSSH client from `../wolf`.
 
-- `../wolf`: company wolfSSH/wolfSSL snapshot. Treat as read-only unless the company client lacks a required capability.
-  - wolfSSH `8643d7be841184f766374e3b0ed68ced6391543c` / 1.5.0 + company patch
-  - wolfSSL `1d363f3adceba9d1478230ede476a37b0dcdef24` / 5.9.1
-- `js/`: shared `BoardSession` core and the minimal `@carizon` VS Code chat-participant demo.
-- `native/`: the earlier local native implementation kept as migration/reference code.
-- `config/gcpp/`: OpenSSH management profile (`gcp`) and the manual OCI Baton profile (`gcpp`). Runtime identities live in each user's `~/.ssh/`.
-- `scripts/test-direct.sh`: company wolfSSH through gcloud IAP to GCP:2222.
-- `scripts/test-baton.sh`: `ssh gcpp` opens OpenSSH to OCI E1, then `RemoteCommand` runs company wolfSSH on E1 to GCP IPv6:2222.
+- `js/packages/board-session/`: shared persistent `BoardSession` implementation.
+- `js/vscode/board-copilot/`: minimal `@carizon` VS Code chat-participant demo.
+- `config/gcpp/baton.ssh_config`: OCI E1 first-hop configuration used by the Baton simulator path.
+- `scripts/build-baton-wolfssh.sh`: builds/deploys the E1 test-only wolfSSH binary.
+- `scripts/test-direct.sh`: validates local company wolfSSH through a GCP IAP TCP tunnel to the GCP PKIX-SSHD simulator.
+- `scripts/test-baton.sh`: validates the OCI Baton path to the same simulator.
 
-SSH config is included from:
-
-- `config/gcpp/direct.ssh_config` -> `Host gcp` (management only; the BoardSession Direct path uses company wolfSSH)
-- `config/gcpp/baton.ssh_config` -> `Host gcpp`
-
-
-## Baton test runtime
-
-E1 is the only OCI Baton test server. The company wolf source keeps IPv6 out of the product baseline.
-The E1 runtime uses the company wolfSSH 1.5.0 source built with `-DTEST_IPV6`, because the
-company default Linux build selects the IPv4-only branch of wolfSSH's test/client socket
-helper. The runtime lives under `~/.local/remotessh/` on E1.
-Rebuild that Baton-specific binary with `scripts/build-baton-wolfssh.sh`; generated files stay under ignored `build/`.
-
-`Host gcpp` matches the intended production shape:
+Current session paths:
 
 ```text
-local OpenSSH -> OCI E1 -> company wolfssh on E1 -> GCP PKIX-SSHD
+Direct: BoardSession -> local company wolfssh -> IAP TCP tunnel -> GCP PKIX-SSHD
+Baton:  BoardSession -> ssh2 -> OCI E1 -> remote company wolfssh -> GCP PKIX-SSHD
 ```
+
+The E1 simulator build uses `-DTEST_IPV6` only because the E1 -> GCP test hop currently uses IPv6. That flag is test-only and does not belong in the company `wolf` product baseline.
