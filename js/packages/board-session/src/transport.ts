@@ -32,7 +32,6 @@ class LocalTransport extends BaseTransport {
       name: 'xterm-256color',
       cols: 120,
       rows: 40,
-      env: this.route.env ?? process.env,
     });
     this.terminal = terminal;
     terminal.onData(data => this.emitData('stdout', data));

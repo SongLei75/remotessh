@@ -5,7 +5,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 WOLF=$(cd "$ROOT/../wolf" && pwd)
 BUILD="$ROOT/build/baton-wolfssh"
 SRC="$BUILD/src"
-OUT="$BUILD/wolfssh"
+OUT="$BUILD/bin"
 WOLFSSL="$WOLF/out/build/linux/stage/wolfssl"
 
 if [[ ! -d "$WOLFSSL/include" || ! -d "$WOLFSSL/lib" ]]; then
@@ -14,7 +14,7 @@ if [[ ! -d "$WOLFSSL/include" || ! -d "$WOLFSSL/lib" ]]; then
 fi
 
 rm -rf "$BUILD"
-mkdir -p "$SRC"
+mkdir -p "$SRC" "$OUT"
 rsync -a "$WOLF/wolfssh/" "$SRC/"
 cd "$SRC"
 ./autogen.sh
@@ -31,6 +31,7 @@ export LDFLAGS="-L$WOLFSSL/lib"
     --enable-scp \
     --enable-sftp \
     --enable-fwd
-make -j2 apps/wolfssh/wolfssh
-cp apps/wolfssh/.libs/wolfssh "$OUT"
+make -j2 apps/wolfssh/wolfssh examples/scpclient/wolfscp
+cp apps/wolfssh/.libs/wolfssh "$OUT/wolfssh"
+cp examples/scpclient/.libs/wolfscp "$OUT/wolfscp"
 echo "$OUT"

@@ -1,21 +1,34 @@
-import { BoardTarget, LocalRoute, WolfsshRuntime } from './types';
+import { BoardTarget, LocalRoute, WolfsshCommand } from './types';
 
-export function buildWolfsshArgs(board: BoardTarget, runtime: WolfsshRuntime): string[] {
-  return [
-    '-t',
-    '-X',
-    '-i', runtime.identityFile,
-    '-l', board.username,
-    '-p', String(board.port ?? 22),
-    board.host,
-  ];
+export function buildWolfsshCommand(board: BoardTarget, identityFile: string): WolfsshCommand {
+  return {
+    executable: 'wolfssh',
+    args: [
+      '-t',
+      '-X',
+      '-i', identityFile,
+      '-l', board.username,
+      '-p', String(board.port ?? 22),
+      board.host,
+    ],
+  };
 }
 
-export function buildLocalWolfsshRoute(board: BoardTarget, runtime: WolfsshRuntime): LocalRoute {
-  const env = runtime.libraryPath
-    ? { ...process.env, LD_LIBRARY_PATH: runtime.libraryPath }
-    : { ...process.env };
-  return { kind: 'local', executable: runtime.executable, args: buildWolfsshArgs(board, runtime), env };
+export function buildLocalWolfsshRoute(board: BoardTarget, identityFile: string): LocalRoute {
+  return { kind: 'local', ...buildWolfsshCommand(board, identityFile) };
+}
+
+export function buildDockerWolfsshRoute(
+  board: BoardTarget,
+  identityFile: string,
+  containerId: string,
+): LocalRoute {
+  const command = buildWolfsshCommand(board, identityFile);
+  return {
+    kind: 'local',
+    executable: 'docker',
+    args: ['exec', '-it', containerId, command.executable, ...command.args],
+  };
 }
 
 function shellQuote(value: string): string {
@@ -23,9 +36,7 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-export function buildRemoteWolfsshCommand(board: BoardTarget, runtime: WolfsshRuntime): string {
-  const command = [runtime.executable, ...buildWolfsshArgs(board, runtime)].map(shellQuote).join(' ');
-  return runtime.libraryPath
-    ? `exec env LD_LIBRARY_PATH=${shellQuote(runtime.libraryPath)} ${command}`
-    : `exec ${command}`;
+export function buildRemoteWolfsshCommand(board: BoardTarget, identityFile: string): string {
+  const command = buildWolfsshCommand(board, identityFile);
+  return `exec ${[command.executable, ...command.args].map(shellQuote).join(' ')}`;
 }

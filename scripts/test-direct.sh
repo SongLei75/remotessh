@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-WOLF=$(cd "$ROOT/../wolf" && pwd)
 LOCAL_PORT=${DIRECT_PORT:-22021}
 LOG="/tmp/remotessh-iap-direct.$$.log"
 cleanup() {
@@ -28,7 +26,6 @@ for _ in $(seq 1 60); do
 done
 [[ "$ready" == 1 ]] || { cat "$LOG"; exit 1; }
 sleep 2
-LD_LIBRARY_PATH="$WOLF/out/release/linux/lib" \
-    "$WOLF/out/release/linux/bin/wolfssh" -X \
+wolfssh -X \
     -i "$HOME/.ssh/client-identity.pem" -l songlei -p "$LOCAL_PORT" \
     127.0.0.1 "${*:-hostname}"

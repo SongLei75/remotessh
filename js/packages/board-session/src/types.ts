@@ -4,17 +4,15 @@ export interface BoardTarget {
   username: string;
 }
 
-export interface WolfsshRuntime {
+export interface WolfsshCommand {
   executable: string;
-  identityFile: string;
-  libraryPath?: string;
+  args: string[];
 }
 
 export interface LocalRoute {
   kind: 'local';
   executable: string;
   args?: string[];
-  env?: NodeJS.ProcessEnv;
 }
 
 export interface BatonRoute {

@@ -7,7 +7,6 @@ import {
   BoardSession,
   BoardTarget,
   ExecutionRoute,
-  WolfsshRuntime,
   buildLocalWolfsshRoute,
   buildRemoteWolfsshCommand,
 } from '@songlei/board-session';
@@ -20,16 +19,8 @@ const GCP_BOARD: BoardTarget = {
   port: 2222,
   username: 'songlei',
 };
-const LOCAL_WOLFSSH: WolfsshRuntime = {
-  executable: path.join(os.homedir(), 'project/wolf/out/release/linux/bin/wolfssh'),
-  identityFile: path.join(os.homedir(), '.ssh/client-identity.pem'),
-  libraryPath: path.join(os.homedir(), 'project/wolf/out/release/linux/lib'),
-};
-const BATON_WOLFSSH: WolfsshRuntime = {
-  executable: '/home/ubuntu/.local/remotessh/company-wolf/bin/wolfssh',
-  identityFile: '/home/ubuntu/.ssh/client-identity.pem',
-  libraryPath: '/home/ubuntu/.local/remotessh/company-wolf/lib',
-};
+const LOCAL_IDENTITY = path.join(os.homedir(), '.ssh/client-identity.pem');
+const BATON_IDENTITY = '/home/ubuntu/.ssh/client-identity.pem';
 
 export class BoardSessionManager {
   private session?: BoardSession;
@@ -46,7 +37,7 @@ export class BoardSessionManager {
     try {
       const route = buildLocalWolfsshRoute(
         { host: '127.0.0.1', port: DIRECT_PORT, username: GCP_BOARD.username },
-        LOCAL_WOLFSSH,
+        LOCAL_IDENTITY,
       );
       await this.open(route, 'direct:gcp');
     } catch (error) {
@@ -185,7 +176,7 @@ export class BoardSessionManager {
       port: Number(values.get('port') ?? 22),
       username,
       privateKey: await fs.readFile(identityFile),
-      command: buildRemoteWolfsshCommand(GCP_BOARD, BATON_WOLFSSH),
+      command: buildRemoteWolfsshCommand(GCP_BOARD, BATON_IDENTITY),
     };
   }
 }
