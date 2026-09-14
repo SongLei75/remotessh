@@ -7,8 +7,8 @@ import {
   BoardSession,
   BoardTarget,
   ExecutionRoute,
-  buildLocalWolfsshRoute,
-  buildRemoteWolfsshCommand,
+  buildLocal,
+  buildRemote,
 } from '@songlei/board-session';
 
 const execFileAsync = promisify(execFile);
@@ -20,7 +20,7 @@ const GCP_BOARD: BoardTarget = {
   username: 'songlei',
 };
 const LOCAL_IDENTITY = path.join(os.homedir(), '.ssh/client-identity.pem');
-const BATON_IDENTITY = '/home/ubuntu/.ssh/client-identity.pem';
+const JUMP_IDENTITY = '/home/ubuntu/.ssh/client-identity.pem';
 
 export class BoardSessionManager {
   private session?: BoardSession;
@@ -35,7 +35,7 @@ export class BoardSessionManager {
     await this.close();
     await this.startDirectTunnel();
     try {
-      const route = buildLocalWolfsshRoute(
+      const route = buildLocal(
         { host: '127.0.0.1', port: DIRECT_PORT, username: GCP_BOARD.username },
         LOCAL_IDENTITY,
       );
@@ -46,9 +46,9 @@ export class BoardSessionManager {
     }
   }
 
-  async openBatonDemo(boardName: string, hours: number): Promise<void> {
+  async openJumpDemo(boardName: string, hours: number): Promise<void> {
     await this.close();
-    await this.open(await this.resolveGcppRoute(), `baton:${boardName}:${hours}h`);
+    await this.open(await this.resolveJumpRoute(), `jump:${boardName}:${hours}h`);
   }
 
   async run(command: string, timeoutMs = 30000) {
@@ -84,7 +84,7 @@ export class BoardSessionManager {
   }
 
   private async open(route: ExecutionRoute, label: string): Promise<void> {
-    const session = new BoardSession({ route });
+    const session = new BoardSession(route);
     await session.start();
     this.session = session;
     this.label = label;
@@ -149,7 +149,7 @@ export class BoardSessionManager {
     }
   }
 
-  private async resolveGcppRoute(): Promise<ExecutionRoute> {
+  private async resolveJumpRoute(): Promise<ExecutionRoute> {
     const { stdout } = await execFileAsync('ssh', ['-G', 'gcpp'], { maxBuffer: 1024 * 1024 });
     const values = new Map<string, string>();
     for (const line of stdout.split(/\r?\n/)) {
@@ -171,12 +171,12 @@ export class BoardSessionManager {
       : identity;
 
     return {
-      kind: 'baton',
+      kind: 'jump',
       host,
       port: Number(values.get('port') ?? 22),
       username,
       privateKey: await fs.readFile(identityFile),
-      command: buildRemoteWolfsshCommand(GCP_BOARD, BATON_IDENTITY),
+      command: buildRemote(GCP_BOARD, JUMP_IDENTITY),
     };
   }
 }

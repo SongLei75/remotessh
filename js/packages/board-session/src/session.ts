@@ -1,45 +1,54 @@
-import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
-import { BoardDataEvent, BoardSessionOptions, OutputSnapshot, RunResult } from './types';
+import { ExecutionRoute } from './types';
 import { createTransport, SessionTransport } from './transport';
 
-export class BoardSession extends EventEmitter {
+const MAX_BUFFERED_CHARS = 2_000_000;
+const READY_TIMEOUT_MS = 10_000;
+
+interface OutputSnapshot { text: string; nextOffset: number; }
+interface RunResult extends OutputSnapshot { completed: boolean; exitCode?: number; }
+
+export class BoardSession {
   private readonly transport: SessionTransport;
-  private readonly maxBufferedChars: number;
   private buffer = '';
   private baseOffset = 0;
   private started = false;
   private closed = false;
+  private failure?: Error;
 
-  constructor(private readonly options: BoardSessionOptions) {
-    super();
-    this.maxBufferedChars = options.maxBufferedChars ?? 2_000_000;
-    this.transport = createTransport(options.route);
-    this.transport.events.on('data', (event: BoardDataEvent) => this.onData(event));
-    this.transport.events.on('exit', event => { this.closed = true; this.emit('exit', event); });
-    this.transport.events.on('close', () => { this.closed = true; this.emit('close'); });
-    this.transport.events.on('error', error => this.emit('error', error));
+  constructor(route: ExecutionRoute) {
+    this.transport = createTransport(route);
+    this.transport.events.on('data', (data: string) => this.onData(data));
+    this.transport.events.on('close', () => { this.closed = true; });
+    this.transport.events.on('error', (error: Error) => {
+      this.failure = error;
+      this.closed = true;
+    });
   }
 
-  get isStarted(): boolean { return this.started; }
   get isClosed(): boolean { return this.closed; }
   get currentOffset(): number { return this.baseOffset + this.buffer.length; }
 
-  private onData(event: BoardDataEvent): void {
-    this.buffer += event.data;
-    if (this.buffer.length > this.maxBufferedChars) {
-      const remove = this.buffer.length - this.maxBufferedChars;
+  private onData(data: string): void {
+    this.buffer += data;
+    if (this.buffer.length > MAX_BUFFERED_CHARS) {
+      const remove = this.buffer.length - MAX_BUFFERED_CHARS;
       this.buffer = this.buffer.slice(remove);
       this.baseOffset += remove;
     }
-    this.emit('data', event);
   }
 
   async start(): Promise<void> {
     if (this.started) return;
-    await this.transport.start();
-    this.started = true;
-    await this.waitUntilReady(this.options.readyTimeoutMs ?? 10000);
+    try {
+      await this.transport.start();
+      this.started = true;
+      await this.waitUntilReady(READY_TIMEOUT_MS);
+    } catch (error) {
+      this.closed = true;
+      await this.transport.kill();
+      throw error;
+    }
   }
 
   private async waitUntilReady(timeoutMs: number): Promise<void> {
@@ -50,6 +59,7 @@ export class BoardSession extends EventEmitter {
     while (Date.now() < deadline && !this.closed && this.currentOffset === fromOffset) {
       await new Promise(resolve => setTimeout(resolve, 40));
     }
+    if (this.failure) throw this.failure;
     if (this.closed || this.currentOffset === fromOffset) {
       throw new Error(`board shell did not become ready within ${timeoutMs} ms`);
     }
@@ -59,21 +69,21 @@ export class BoardSession extends EventEmitter {
       if (this.snapshot(fromOffset).text.includes(marker)) return;
       await new Promise(resolve => setTimeout(resolve, 40));
     }
+    if (this.failure) throw this.failure;
     throw new Error(`board shell did not become ready within ${timeoutMs} ms`);
   }
 
   write(data: string | Buffer): void {
+    if (this.failure) throw this.failure;
     if (!this.started || this.closed) throw new Error('board session is not active');
     this.transport.write(data);
   }
 
   snapshot(fromOffset = this.baseOffset): OutputSnapshot {
     const start = Math.max(fromOffset, this.baseOffset);
-    const localStart = start - this.baseOffset;
     return {
-      text: this.buffer.slice(localStart),
+      text: this.buffer.slice(start - this.baseOffset),
       nextOffset: this.currentOffset,
-      truncatedBeforeOffset: this.baseOffset,
     };
   }
 
@@ -92,6 +102,7 @@ export class BoardSession extends EventEmitter {
       }
       if (this.closed) break;
     }
+    if (this.failure) throw this.failure;
     return this.snapshot(fromOffset);
   }
 
@@ -107,13 +118,9 @@ export class BoardSession extends EventEmitter {
       const snap = this.snapshot(fromOffset);
       const match = markerRegex.exec(snap.text);
       if (match) {
-        const markerIndex = match.index;
-        const after = markerIndex + match[0].length;
-        const clean = snap.text.slice(0, markerIndex) + snap.text.slice(after);
         return {
-          text: clean,
+          text: snap.text.slice(0, match.index) + snap.text.slice(match.index + match[0].length),
           nextOffset: snap.nextOffset,
-          truncatedBeforeOffset: snap.truncatedBeforeOffset,
           completed: true,
           exitCode: Number(match[1]),
         };
@@ -121,12 +128,11 @@ export class BoardSession extends EventEmitter {
       await new Promise(resolve => setTimeout(resolve, 40));
     }
 
-    const snap = this.snapshot(fromOffset);
-    return { ...snap, completed: false };
+    if (this.failure) throw this.failure;
+    return { ...this.snapshot(fromOffset), completed: false };
   }
 
   async close(): Promise<void> {
-    if (this.closed) return;
     this.closed = true;
     await this.transport.kill();
   }

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import * as pty from 'node-pty';
 import { Client, ClientChannel } from 'ssh2';
-import { BatonRoute, BoardDataEvent, ExecutionRoute, LocalRoute } from './types';
+import { ExecutionRoute, JumpRoute, LocalRoute } from './types';
 
 export interface SessionTransport {
   readonly events: EventEmitter;
@@ -16,9 +16,9 @@ abstract class BaseTransport implements SessionTransport {
   abstract write(data: string | Buffer): void;
   abstract kill(): Promise<void>;
 
-  protected emitData(stream: BoardDataEvent['stream'], data: Buffer | string): void {
+  protected emitData(data: Buffer | string): void {
     const text = data.toString();
-    if (text) this.events.emit('data', { stream, data: text } satisfies BoardDataEvent);
+    if (text) this.events.emit('data', text);
   }
 }
 
@@ -28,16 +28,16 @@ class LocalTransport extends BaseTransport {
   constructor(private readonly route: LocalRoute) { super(); }
 
   async start(): Promise<void> {
-    const terminal = pty.spawn(this.route.executable, this.route.args ?? [], {
+    const terminal = pty.spawn(this.route.executable, this.route.args, {
       name: 'xterm-256color',
       cols: 120,
       rows: 40,
     });
     this.terminal = terminal;
-    terminal.onData(data => this.emitData('stdout', data));
-    terminal.onExit(({ exitCode, signal }) => {
+    terminal.onData(data => this.emitData(data));
+    terminal.onExit(() => {
       this.terminal = undefined;
-      this.events.emit('exit', { code: exitCode, signal: signal ?? null });
+      this.events.emit('close');
     });
   }
 
@@ -53,49 +53,45 @@ class LocalTransport extends BaseTransport {
   }
 }
 
-class BatonTransport extends BaseTransport {
+class JumpTransport extends BaseTransport {
   private client?: Client;
   private channel?: ClientChannel;
 
-  constructor(private readonly route: BatonRoute) { super(); }
+  constructor(private readonly route: JumpRoute) { super(); }
 
   async start(): Promise<void> {
-    if (!this.route.password && !this.route.privateKey && !this.route.agent) {
-      throw new Error('Baton route requires password, privateKey, or agent authentication');
-    }
-
     const client = new Client();
     this.client = client;
     await new Promise<void>((resolve, reject) => {
-      client.once('ready', resolve);
-      client.once('error', reject);
+      const onReady = () => { client.off('error', onError); resolve(); };
+      const onError = (error: Error) => { client.off('ready', onReady); reject(error); };
+      client.once('ready', onReady);
+      client.once('error', onError);
       client.connect({
         host: this.route.host,
         port: this.route.port ?? 22,
         username: this.route.username,
-        password: this.route.password,
         privateKey: this.route.privateKey,
-        agent: this.route.agent,
         keepaliveInterval: 10000,
         keepaliveCountMax: 3,
-        readyTimeout: this.route.readyTimeoutMs ?? 15000,
+        readyTimeout: 15000,
       });
     });
+    client.on('error', (error: Error) => this.events.emit('error', error));
 
     const channel = await new Promise<ClientChannel>((resolve, reject) => {
       client.exec(this.route.command, { pty: { term: 'xterm-256color', cols: 120, rows: 40 } },
         (error, stream) => error ? reject(error) : resolve(stream));
     });
     this.channel = channel;
-    channel.on('data', (data: Buffer) => this.emitData('stdout', data));
-    channel.stderr.on('data', (data: Buffer) => this.emitData('stderr', data));
-    channel.on('exit', (code: number | null, signal: string | null) => this.events.emit('exit', { code, signal }));
-    channel.on('close', () => this.events.emit('close'));
+    channel.on('data', (data: Buffer) => this.emitData(data));
+    channel.stderr.on('data', (data: Buffer) => this.emitData(data));
+    channel.on('close', () => { this.events.emit('close'); client.end(); });
     channel.on('error', (error: Error) => this.events.emit('error', error));
   }
 
   write(data: string | Buffer): void {
-    if (!this.channel?.writable) throw new Error('Baton board session is not writable');
+    if (!this.channel?.writable) throw new Error('Jump board session is not writable');
     this.channel.write(data);
   }
 
@@ -111,5 +107,5 @@ class BatonTransport extends BaseTransport {
 }
 
 export function createTransport(route: ExecutionRoute): SessionTransport {
-  return route.kind === 'local' ? new LocalTransport(route) : new BatonTransport(route);
+  return route.kind === 'local' ? new LocalTransport(route) : new JumpTransport(route);
 }

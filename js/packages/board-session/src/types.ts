@@ -4,38 +4,19 @@ export interface BoardTarget {
   username: string;
 }
 
-export interface WolfsshCommand {
+export interface LocalRoute {
+  kind: 'local';
   executable: string;
   args: string[];
 }
 
-export interface LocalRoute {
-  kind: 'local';
-  executable: string;
-  args?: string[];
-}
-
-export interface BatonRoute {
-  kind: 'baton';
+export interface JumpRoute {
+  kind: 'jump';
   host: string;
   port?: number;
   username: string;
-  password?: string;
-  privateKey?: string | Buffer;
-  agent?: string;
+  privateKey: string | Buffer;
   command: string;
-  readyTimeoutMs?: number;
 }
 
-export type ExecutionRoute = LocalRoute | BatonRoute;
-
-export interface BoardSessionOptions {
-  route: ExecutionRoute;
-  maxBufferedChars?: number;
-  readyTimeoutMs?: number;
-}
-
-export type BoardStream = 'stdout' | 'stderr';
-export interface BoardDataEvent { stream: BoardStream; data: string; }
-export interface OutputSnapshot { text: string; nextOffset: number; truncatedBeforeOffset: number; }
-export interface RunResult extends OutputSnapshot { completed: boolean; exitCode?: number; }
+export type ExecutionRoute = LocalRoute | JumpRoute;

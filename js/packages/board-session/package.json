@@ -1,7 +1,7 @@
 {
   "name": "@songlei/board-session",
   "version": "0.1.0",
-  "description": "Persistent board terminal session with local and Baton transports",
+  "description": "Persistent board terminal session with local and jump-server transports",
   "license": "UNLICENSED",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

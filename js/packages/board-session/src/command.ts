@@ -1,6 +1,6 @@
-import { BoardTarget, LocalRoute, WolfsshCommand } from './types';
+import { BoardTarget, LocalRoute } from './types';
 
-export function buildWolfsshCommand(board: BoardTarget, identityFile: string): WolfsshCommand {
+function buildWolfsshCommand(board: BoardTarget, identityFile: string) {
   return {
     executable: 'wolfssh',
     args: [
@@ -14,15 +14,11 @@ export function buildWolfsshCommand(board: BoardTarget, identityFile: string): W
   };
 }
 
-export function buildLocalWolfsshRoute(board: BoardTarget, identityFile: string): LocalRoute {
+export function buildLocal(board: BoardTarget, identityFile: string): LocalRoute {
   return { kind: 'local', ...buildWolfsshCommand(board, identityFile) };
 }
 
-export function buildDockerWolfsshRoute(
-  board: BoardTarget,
-  identityFile: string,
-  containerId: string,
-): LocalRoute {
+export function buildDocker(board: BoardTarget, identityFile: string, containerId: string): LocalRoute {
   const command = buildWolfsshCommand(board, identityFile);
   return {
     kind: 'local',
@@ -31,12 +27,8 @@ export function buildDockerWolfsshRoute(
   };
 }
 
-function shellQuote(value: string): string {
-  if (!value) return "''";
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-export function buildRemoteWolfsshCommand(board: BoardTarget, identityFile: string): string {
+export function buildRemote(board: BoardTarget, identityFile: string): string {
   const command = buildWolfsshCommand(board, identityFile);
-  return `exec ${[command.executable, ...command.args].map(shellQuote).join(' ')}`;
+  const quote = (value: string) => value ? `'${value.replace(/'/g, `'\\''`)}'` : "''";
+  return `exec ${[command.executable, ...command.args].map(quote).join(' ')}`;
 }

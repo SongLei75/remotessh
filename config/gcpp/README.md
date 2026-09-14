@@ -3,7 +3,7 @@
 Runtime identities are not stored in this directory:
 
 - Direct: `~/.ssh/client-identity.pem` and `~/.ssh/known_hosts`
-- Baton E1: `/home/ubuntu/.ssh/client-identity.pem` and `/home/ubuntu/.ssh/known_hosts`
+- Jump server E1: `/home/ubuntu/.ssh/client-identity.pem` and `/home/ubuntu/.ssh/known_hosts`
 
 Every environment that performs the final board hop must provide working `wolfssh` and `wolfscp` commands in `PATH` and configure their dynamic-library lookup itself.
 

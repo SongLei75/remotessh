@@ -7,7 +7,7 @@ const sessions = new BoardSessionManager();
 async function subscribe(response: vscode.ChatResponseStream): Promise<void> {
   const board = await vscode.window.showQuickPick(
     ['gcp 1', 'gcp 2', 'gcp 3', 'gcp 4', 'gcp 5'],
-    { title: '选择 Baton 板子', placeHolder: '模拟返回的可预约板子' },
+    { title: '选择板子', placeHolder: '模拟返回的可预约板子' },
   );
   if (!board) return;
 
@@ -19,8 +19,8 @@ async function subscribe(response: vscode.ChatResponseStream): Promise<void> {
 
   const hours = Number(duration[0]);
   response.progress(`正在连接 ${board}…`);
-  await sessions.openBatonDemo(board, hours);
-  response.markdown(`已选择 **${board}**，模拟预约 **${duration}**。当前 BoardSession 通过 OCI Baton 链路连接到 GCP 测试服务器。`);
+  await sessions.openJumpDemo(board, hours);
+  response.markdown(`已选择 **${board}**，模拟预约 **${duration}**。当前 BoardSession 通过 OCI JumpServer 连接到 GCP 测试服务器。`);
 }
 
 async function connectDirect(response: vscode.ChatResponseStream): Promise<void> {
@@ -121,7 +121,7 @@ async function handleBoardRequest(
     return;
   }
   if (!prompt) {
-    response.markdown('可使用 `sub` 模拟 Baton 预约，或使用 `connect` 模拟 Direct 连接。');
+    response.markdown('可使用 `sub` 模拟 JumpServer 预约链路，或使用 `connect` 模拟 Direct 连接。');
     return;
   }
 
