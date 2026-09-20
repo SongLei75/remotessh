@@ -1,21 +1,6 @@
-# Generated builds
-/build/
-/js/node_modules/
-/js/**/node_modules/
-/js/**/dist/
-*.vsix
+node_modules/
+dist/
+build/
 *.tgz
-
-# Machine/deployment identities and generated PKI material
-/config/gcpp/*
-!/config/gcpp/README.md
-!/config/gcpp/baton.ssh_config
-
-# Editor / OS noise
-.vscode/
-.DS_Store
-*.swp
-*~
-
-# Test runtime scratch
-/.runtime/
+*.pem
+.env
